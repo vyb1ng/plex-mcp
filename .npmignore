@@ -1,0 +1,35 @@
+# Test files
+tests/
+*.test.js
+jest.config.js
+
+# Development files
+.env
+.env.example
+.env.local
+.env.development
+.env.test
+.env.production
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Git files
+.git/
+.gitignore
+
+# Documentation (if you want to exclude)
+README.txt
+
+# Node modules (usually already excluded)
+node_modules/
+
+# Coverage reports
+coverage/
