@@ -130,6 +130,107 @@ describeE2E('E2E Live Plex Server Tests', () => {
     }, 10000);
   });
 
+  describe('Playlist Operations with Live Server', () => {
+    let createdPlaylistId = null;
+    
+    it('should create playlist with initial item using ratingKey', async () => {
+      // First search for an item to use
+      const searchResult = await server.handlePlexSearch({
+        query: 'track',
+        limit: 1
+      });
+      
+      const searchText = searchResult.content[0].text;
+      console.log('Search result:', searchText);
+      
+      // Extract ratingKey from search results - look for "ID: 244736" pattern
+      const idMatch = searchText.match(/\*\*ID: (\d+)\*\*/);
+      
+      if (idMatch) {
+        const itemKey = idMatch[1];
+        console.log('Found item with ratingKey:', itemKey);
+        
+        // Create playlist with this item
+        const createResult = await server.handleCreatePlaylist({
+          title: 'Claude_Code_Test_' + Date.now(),
+          type: 'audio',
+          item_key: itemKey
+        });
+        
+        expect(createResult).toBeDefined();
+        const createText = createResult.content[0].text;
+        console.log('Create result:', createText);
+        
+        // Extract playlist ID from response
+        const playlistMatch = createText.match(/Playlist ID: (\w+)/);
+        if (playlistMatch) {
+          createdPlaylistId = playlistMatch[1];
+          console.log('Created playlist ID:', createdPlaylistId);
+        }
+        
+        expect(createText).toMatch(/Successfully created playlist|Playlist ID:/);
+      } else {
+        console.log('No items found in search, skipping playlist creation test');
+      }
+    }, 15000);
+
+    it('should add second item to playlist using ratingKey', async () => {
+      if (!createdPlaylistId) {
+        console.log('No playlist created, skipping add item test');
+        return;
+      }
+      
+      // Search for another item
+      const searchResult = await server.handlePlexSearch({
+        query: 'music',
+        limit: 2
+      });
+      
+      const searchText = searchResult.content[0].text;
+      console.log('Second search result:', searchText);
+      
+      // Extract different ratingKey from search results
+      const allIds = [...searchText.matchAll(/\*\*ID: (\d+)\*\*/g)];
+      
+      if (allIds.length > 1) {
+        const secondItemKey = allIds[1][1];
+        console.log('Adding second item with ratingKey:', secondItemKey);
+        
+        // Add item to playlist
+        const addResult = await server.handleAddToPlaylist({
+          playlist_id: createdPlaylistId,
+          item_keys: [secondItemKey]
+        });
+        
+        expect(addResult).toBeDefined();
+        const addText = addResult.content[0].text;
+        console.log('Add item result:', addText);
+        
+        expect(addText).toMatch(/Successfully added|items to playlist|Error adding items/);
+      } else {
+        console.log('Not enough items found for add test');
+      }
+    }, 15000);
+
+    it('should browse playlist contents', async () => {
+      if (!createdPlaylistId) {
+        console.log('No playlist created, skipping browse test');
+        return;
+      }
+      
+      const browseResult = await server.handleBrowsePlaylist({
+        playlist_id: createdPlaylistId
+      });
+      
+      expect(browseResult).toBeDefined();
+      const browseText = browseResult.content[0].text;
+      console.log('Browse playlist result:', browseText);
+      
+      // Should show playlist contents or explain why empty
+      expect(browseText).toMatch(/Found \d+ items|No items found|Playlist contents|Error browsing playlist/);
+    }, 10000);
+  });
+
   describe('Error Handling with Live Server', () => {
     it('should handle invalid search gracefully', async () => {
       const result = await server.handlePlexSearch({

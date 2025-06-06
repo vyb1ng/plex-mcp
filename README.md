@@ -32,9 +32,9 @@ A Model Context Protocol (MCP) server for searching Plex media libraries using C
 
 ## Claude Desktop Configuration
 
-### Option 1: Using npx (Recommended)
+### Option 1: Production (Using npx - Recommended)
 
-Add this configuration to your Claude Desktop settings:
+Add this configuration to your Claude Desktop settings for the stable published version:
 
 ```json
 {
@@ -51,14 +51,14 @@ Add this configuration to your Claude Desktop settings:
 }
 ```
 
-### Option 2: Local development
+### Option 2: Development (Local)
 
-For local development, add this configuration:
+For development with your local code changes, add this configuration:
 
 ```json
 {
   "mcpServers": {
-    "plex": {
+    "plex-dev": {
       "command": "node",
       "args": ["/path/to/your/plex-mcp/index.js"],
       "env": {
@@ -71,6 +71,33 @@ For local development, add this configuration:
 ```
 
 Replace `/path/to/your/plex-mcp/` with the actual path to this project directory.
+
+### Running Both Versions
+
+You can configure both versions simultaneously by using different server names (`plex` and `plex-dev`):
+
+```json
+{
+  "mcpServers": {
+    "plex": {
+      "command": "npx",
+      "args": ["plex-mcp"],
+      "env": {
+        "PLEX_URL": "http://your-plex-server:32400",
+        "PLEX_TOKEN": "your_plex_token"
+      }
+    },
+    "plex-dev": {
+      "command": "node",
+      "args": ["/path/to/your/plex-mcp/index.js"],
+      "env": {
+        "PLEX_URL": "http://your-plex-server:32400",
+        "PLEX_TOKEN": "your_plex_token"
+      }
+    }
+  }
+}
+```
 
 **Configuration Steps:**
 1. Open Claude Desktop settings (Cmd/Ctrl + ,)

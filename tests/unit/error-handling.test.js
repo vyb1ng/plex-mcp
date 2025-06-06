@@ -98,7 +98,7 @@ describe('Error Handling Tests', () => {
       const result = await server.handleAddToPlaylist({ playlist_id: '123', item_keys: ['456'] });
       
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain('Error adding items to playlist');
+      expect(result.content[0].text).toContain('Playlist with ID 123 not found');
     });
 
     it('should handle errors in handleRemoveFromPlaylist', async () => {
@@ -107,7 +107,7 @@ describe('Error Handling Tests', () => {
       const result = await server.handleRemoveFromPlaylist({ playlist_id: '123', item_keys: ['456'] });
       
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain('Error removing items from playlist');
+      expect(result.content[0].text).toContain('Playlist with ID 123 not found');
     });
 
     it('should handle errors in handleDeletePlaylist', async () => {

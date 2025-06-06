@@ -1,5 +1,25 @@
 # Plex MCP Server - TODO List
 
+## Recent Completions
+
+### ✅ Completed Items
+- **Plex Item ID Investigation** - Identified correct field usage for playlist operations
+  - Confirmed `ratingKey` is the primary identifier for all playlist operations
+  - Documented ID field relationships (`ratingKey`, `key`, `machineIdentifier`)
+  - Found URI format conversion pattern for server operations
+- **Playlist Operation Parameter Analysis** - Verified correct API parameter formats
+  - Confirmed `item_keys` array expects `ratingKey` values from search results
+  - Documented URI conversion: `ratingKey` → `server://localhost/com.plexapp.plugins.library/library/metadata/{key}`
+- **Live Playlist Test Implementation** - Created comprehensive E2E test sequence
+  - Added playlist creation test with dynamic item search
+  - Added playlist item addition test with multiple items
+  - Added playlist browsing verification test
+  - Tests extract `ratingKey` from search results using `**ID: (\d+)**` pattern
+- **Browse Playlist Bug Fix** - Fixed empty results issue in `handleBrowsePlaylist`
+  - Added missing pagination parameters (`X-Plex-Container-Start`, `X-Plex-Container-Size`)
+  - Added fallback to `/playlists/{id}/items` endpoint when main endpoint returns empty
+  - Added `leafCount` check to detect playlists that should have items
+
 ## Unimplemented Plex API Features
 
 ### Critical Missing APIs (High Priority)

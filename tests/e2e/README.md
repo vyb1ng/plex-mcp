@@ -56,6 +56,20 @@ The E2E tests verify:
 - **Search Functionality**: Performs searches against live data
 - **Error Handling**: Tests invalid searches and library keys
 
+### 🧪 **Specialized Analysis Tests**
+
+Additional detailed analysis tests for debugging API behavior:
+
+- **`playlist-behavior-analysis.test.js`**: Comprehensive playlist operation analysis
+- **`remove-bug-investigation.test.js`**: 🚨 Critical remove operation bug investigation  
+- **`multiple-item-add-test.test.js`**: Multi-item addition behavior analysis
+
+These tests help diagnose:
+- Why remove operations may delete entire playlists
+- Whether multiple-item additions work correctly
+- Accuracy of operation result messages
+- Patterns in API response behavior
+
 ## Test Behavior
 
 - **Automatic Skipping**: Tests skip automatically if `PLEX_URL` or `PLEX_TOKEN` are not set

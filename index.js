@@ -456,6 +456,10 @@ class PlexMCPServer {
               required: ["playlist_id", "item_keys"],
             },
           },
+          // DISABLED: remove_from_playlist - PROBLEMATIC due to Plex API limitations
+          // This operation removes ALL instances of matching items, not just one
+          // Uncomment only after implementing safer removal patterns
+          /*
           {
             name: "remove_from_playlist",
             description: "Remove items from an existing playlist",
@@ -477,6 +481,7 @@ class PlexMCPServer {
               required: ["playlist_id", "item_keys"],
             },
           },
+          */
           {
             name: "delete_playlist",
             description: "Delete an existing playlist",
@@ -644,8 +649,9 @@ class PlexMCPServer {
           return await this.handleCreatePlaylist(request.params.arguments);
         case "add_to_playlist":
           return await this.handleAddToPlaylist(request.params.arguments);
-        case "remove_from_playlist":
-          return await this.handleRemoveFromPlaylist(request.params.arguments);
+        // DISABLED: remove_from_playlist - PROBLEMATIC operation
+        // case "remove_from_playlist":
+        //   return await this.handleRemoveFromPlaylist(request.params.arguments);
         case "delete_playlist":
           return await this.handleDeletePlaylist(request.params.arguments);
         case "get_watched_status":
@@ -1516,7 +1522,9 @@ class PlexMCPServer {
       const playlistUrl = `${plexUrl}/playlists/${playlist_id}`;
       const response = await axios.get(playlistUrl, { 
         params: {
-          'X-Plex-Token': plexToken
+          'X-Plex-Token': plexToken,
+          'X-Plex-Container-Start': 0,
+          'X-Plex-Container-Size': limit || 50
         },
         httpsAgent: this.getHttpsAgent()
       });
@@ -1527,14 +1535,46 @@ class PlexMCPServer {
           content: [
             {
               type: "text",
-              text: `Playlist with ID ${playlist_id} not found or is empty`,
+              text: `Playlist with ID ${playlist_id} not found`,
             },
           ],
         };
       }
 
       const playlist = playlistData.Metadata[0];
-      const items = playlistData.Metadata[0].Metadata || [];
+      
+      // Try to get items from the current response first
+      let items = playlistData.Metadata[0].Metadata || [];
+      
+      // If no items found, try the /items endpoint specifically
+      if (items.length === 0 && playlist.leafCount && playlist.leafCount > 0) {
+        try {
+          const itemsUrl = `${plexUrl}/playlists/${playlist_id}/items`;
+          const itemsResponse = await axios.get(itemsUrl, { 
+            params: {
+              'X-Plex-Token': plexToken,
+              'X-Plex-Container-Start': 0,
+              'X-Plex-Container-Size': limit || 50
+            },
+            httpsAgent: this.getHttpsAgent()
+          });
+          
+          const itemsData = itemsResponse.data.MediaContainer;
+          if (itemsData && itemsData.Metadata) {
+            items = itemsData.Metadata;
+          }
+        } catch (itemsError) {
+          console.error(`Failed to fetch playlist items via /items endpoint: ${itemsError.message}`);
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Error retrieving playlist items: ${itemsError.message}`,
+              },
+            ],
+          };
+        }
+      }
       
       // Limit results if specified
       const limitedItems = limit ? items.slice(0, limit) : items;
@@ -1555,7 +1595,7 @@ class PlexMCPServer {
       resultText += `\n\n`;
 
       if (limitedItems.length === 0) {
-        resultText += `This playlist is empty.`;
+        resultText += `This playlist appears to be empty or items could not be retrieved.`;
       } else {
         resultText += limitedItems.map((item, index) => {
           let itemText = `${index + 1}. **${item.title}**`;
@@ -1786,6 +1826,17 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
   async handleAddToPlaylist(args) {
     const { playlist_id, item_keys } = args;
     
+    // Input validation
+    if (!playlist_id || typeof playlist_id !== 'string') {
+      throw new Error('Valid playlist_id is required');
+    }
+    if (!item_keys || !Array.isArray(item_keys) || item_keys.length === 0) {
+      throw new Error('item_keys must be a non-empty array');
+    }
+    if (item_keys.some(key => !key || typeof key !== 'string')) {
+      throw new Error('All item_keys must be non-empty strings');
+    }
+    
     try {
       const plexUrl = process.env.PLEX_URL || 'http://localhost:32400';
       const plexToken = process.env.PLEX_TOKEN;
@@ -1795,24 +1846,51 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
       }
 
       // Get playlist info before adding items
-      const playlistUrl = `${plexUrl}/playlists/${playlist_id}`;
-      const beforeResponse = await axios.get(playlistUrl, { 
+      const playlistInfoUrl = `${plexUrl}/playlists/${playlist_id}`;
+      const playlistItemsUrl = `${plexUrl}/playlists/${playlist_id}/items`;
+      
+      // Get playlist metadata (title, etc.)
+      const playlistInfoResponse = await axios.get(playlistInfoUrl, { 
         params: {
           'X-Plex-Token': plexToken
         },
         httpsAgent: this.getHttpsAgent()
       });
       
-      const beforeData = beforeResponse.data.MediaContainer;
-      const beforeCount = (beforeData.Metadata && beforeData.Metadata[0] && beforeData.Metadata[0].Metadata) 
-        ? beforeData.Metadata[0].Metadata.length : 0;
-      const playlistTitle = beforeData.Metadata && beforeData.Metadata[0] 
-        ? beforeData.Metadata[0].title : `Playlist ${playlist_id}`;
+      const playlistInfo = playlistInfoResponse.data.MediaContainer;
+      const playlistTitle = playlistInfo.Metadata && playlistInfo.Metadata[0] 
+        ? playlistInfo.Metadata[0].title : `Playlist ${playlist_id}`;
+      
+      // Get current playlist items count
+      let beforeCount = 0;
+      try {
+        const beforeResponse = await axios.get(playlistItemsUrl, { 
+          params: {
+            'X-Plex-Token': plexToken
+          },
+          httpsAgent: this.getHttpsAgent()
+        });
+        beforeCount = beforeResponse.data.MediaContainer?.totalSize || 0;
+      } catch (error) {
+        // If items endpoint fails, playlist might be empty
+        beforeCount = 0;
+      }
+
+      // Get server machine identifier for proper URI format
+      const serverResponse = await axios.get(`${plexUrl}/`, {
+        headers: { 'X-Plex-Token': plexToken },
+        httpsAgent: this.getHttpsAgent()
+      });
+      
+      const machineIdentifier = serverResponse.data?.MediaContainer?.machineIdentifier;
+      if (!machineIdentifier) {
+        throw new Error('Could not get server machine identifier');
+      }
 
       const addUrl = `${plexUrl}/playlists/${playlist_id}/items`;
       const params = {
         'X-Plex-Token': plexToken,
-        uri: item_keys.map(key => `server://localhost/com.plexapp.plugins.library/library/metadata/${key}`).join(',')
+        uri: item_keys.map(key => `server://${machineIdentifier}/com.plexapp.plugins.library/library/metadata/${key}`).join(',')
       };
 
       const response = await axios.put(addUrl, null, { 
@@ -1820,17 +1898,26 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
         httpsAgent: this.getHttpsAgent()
       });
       
-      // Verify the addition by checking the playlist again
-      const afterResponse = await axios.get(playlistUrl, { 
-        params: {
-          'X-Plex-Token': plexToken
-        },
-        httpsAgent: this.getHttpsAgent()
-      });
+      // Check if the PUT request was successful based on HTTP status
+      const putSuccessful = response.status >= 200 && response.status < 300;
       
-      const afterData = afterResponse.data.MediaContainer;
-      const afterCount = (afterData.Metadata && afterData.Metadata[0] && afterData.Metadata[0].Metadata) 
-        ? afterData.Metadata[0].Metadata.length : 0;
+      // Small delay to allow Plex server to update
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
+      // Verify the addition by checking the playlist items again
+      let afterCount = 0;
+      try {
+        const afterResponse = await axios.get(playlistItemsUrl, { 
+          params: {
+            'X-Plex-Token': plexToken
+          },
+          httpsAgent: this.getHttpsAgent()
+        });
+        afterCount = afterResponse.data.MediaContainer?.totalSize || 0;
+      } catch (error) {
+        // If items endpoint fails, playlist might be empty
+        afterCount = 0;
+      }
       
       const actualAdded = afterCount - beforeCount;
       const attempted = item_keys.length;
@@ -1840,10 +1927,15 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
       resultText += `• Actually added: ${actualAdded} item(s)\n`;
       resultText += `• Playlist size: ${beforeCount} → ${afterCount} items\n`;
       
+      // If HTTP request was successful but count didn't change, 
+      // it's likely the items already exist or are duplicates
       if (actualAdded === attempted) {
         resultText += `✅ All items added successfully!`;
       } else if (actualAdded > 0) {
         resultText += `⚠️ Partial success: ${attempted - actualAdded} item(s) may have been duplicates or invalid`;
+      } else if (putSuccessful) {
+        resultText += `✅ API request successful! Items may already exist in playlist or were duplicates.\n`;
+        resultText += `ℹ️ This is normal behavior - Plex doesn't add duplicate items.`;
       } else {
         resultText += `❌ No items were added. This may indicate:\n`;
         resultText += `  - Invalid item IDs (use ratingKey from search results)\n`;
@@ -1860,11 +1952,27 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
         ],
       };
     } catch (error) {
+      // Enhanced error handling with specific error types
+      let errorMessage = `Error adding items to playlist: ${error.message}`;
+      
+      if (error.response) {
+        const status = error.response.status;
+        if (status === 404) {
+          errorMessage = `Playlist with ID ${playlist_id} not found`;
+        } else if (status === 401 || status === 403) {
+          errorMessage = `Permission denied: Check your Plex token and server access`;
+        } else if (status >= 500) {
+          errorMessage = `Plex server error (${status}): ${error.message}`;
+        }
+      } else if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND') {
+        errorMessage = `Cannot connect to Plex server: Check PLEX_URL configuration`;
+      }
+      
       return {
         content: [
           {
             type: "text",
-            text: `Error adding items to playlist: ${error.message}`,
+            text: errorMessage,
           },
         ],
         isError: true,
@@ -1872,8 +1980,23 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
     }
   }
 
+  // DISABLED METHOD - PROBLEMATIC OPERATION
+  // This method is currently disabled due to destructive Plex API behavior
+  // It removes ALL instances of matching items, not just one instance
+  // Use with extreme caution - consider implementing safer alternatives
   async handleRemoveFromPlaylist(args) {
     const { playlist_id, item_keys } = args;
+    
+    // Input validation
+    if (!playlist_id || typeof playlist_id !== 'string') {
+      throw new Error('Valid playlist_id is required');
+    }
+    if (!item_keys || !Array.isArray(item_keys) || item_keys.length === 0) {
+      throw new Error('item_keys must be a non-empty array');
+    }
+    if (item_keys.some(key => !key || typeof key !== 'string')) {
+      throw new Error('All item_keys must be non-empty strings');
+    }
     
     try {
       const plexUrl = process.env.PLEX_URL || 'http://localhost:32400';
@@ -1884,24 +2007,81 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
       }
 
       // Get playlist info before removing items
-      const playlistUrl = `${plexUrl}/playlists/${playlist_id}`;
-      const beforeResponse = await axios.get(playlistUrl, { 
+      const playlistInfoUrl = `${plexUrl}/playlists/${playlist_id}`;
+      const playlistItemsUrl = `${plexUrl}/playlists/${playlist_id}/items`;
+      
+      // Get playlist metadata (title, etc.)
+      const playlistInfoResponse = await axios.get(playlistInfoUrl, { 
         params: {
           'X-Plex-Token': plexToken
         },
         httpsAgent: this.getHttpsAgent()
       });
       
-      const beforeData = beforeResponse.data.MediaContainer;
-      const beforeCount = (beforeData.Metadata && beforeData.Metadata[0] && beforeData.Metadata[0].Metadata) 
-        ? beforeData.Metadata[0].Metadata.length : 0;
-      const playlistTitle = beforeData.Metadata && beforeData.Metadata[0] 
-        ? beforeData.Metadata[0].title : `Playlist ${playlist_id}`;
+      const playlistInfo = playlistInfoResponse.data.MediaContainer;
+      const playlistTitle = playlistInfo.Metadata && playlistInfo.Metadata[0] 
+        ? playlistInfo.Metadata[0].title : `Playlist ${playlist_id}`;
+      
+      // Get current playlist items with their detailed information
+      let beforeCount = 0;
+      let playlistItems = [];
+      try {
+        const beforeResponse = await axios.get(playlistItemsUrl, { 
+          params: {
+            'X-Plex-Token': plexToken
+          },
+          httpsAgent: this.getHttpsAgent()
+        });
+        beforeCount = beforeResponse.data.MediaContainer?.totalSize || 0;
+        playlistItems = beforeResponse.data.MediaContainer?.Metadata || [];
+      } catch (error) {
+        // If items endpoint fails, playlist might be empty
+        beforeCount = 0;
+        playlistItems = [];
+      }
 
+      // Get server machine identifier for proper URI format
+      const serverResponse = await axios.get(`${plexUrl}/`, {
+        headers: { 'X-Plex-Token': plexToken },
+        httpsAgent: this.getHttpsAgent()
+      });
+      
+      const machineIdentifier = serverResponse.data?.MediaContainer?.machineIdentifier;
+      if (!machineIdentifier) {
+        throw new Error('Could not get server machine identifier');
+      }
+
+      // Find items to remove by matching ratingKeys to actual playlist positions
+      const itemsToRemove = [];
+      const itemKeysSet = new Set(item_keys);
+      
+      playlistItems.forEach((item, index) => {
+        if (itemKeysSet.has(item.ratingKey)) {
+          itemsToRemove.push({
+            ratingKey: item.ratingKey,
+            position: index,
+            title: item.title || 'Unknown'
+          });
+        }
+      });
+      
+      if (itemsToRemove.length === 0) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `No matching items found in playlist "${playlistTitle}".\\nSpecified items may not exist in this playlist.`,
+            },
+          ],
+        };
+      }
+      
+      // WARNING: Current Plex API behavior - this removes ALL instances of matching items
+      // This is a limitation of the Plex API - there's no way to remove just specific instances
       const removeUrl = `${plexUrl}/playlists/${playlist_id}/items`;
       const params = {
         'X-Plex-Token': plexToken,
-        uri: item_keys.map(key => `server://localhost/com.plexapp.plugins.library/library/metadata/${key}`).join(',')
+        uri: itemsToRemove.map(item => `server://${machineIdentifier}/com.plexapp.plugins.library/library/metadata/${item.ratingKey}`).join(',')
       };
 
       const response = await axios.delete(removeUrl, { 
@@ -1909,30 +2089,52 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
         httpsAgent: this.getHttpsAgent()
       });
       
-      // Verify the removal by checking the playlist again
-      const afterResponse = await axios.get(playlistUrl, { 
-        params: {
-          'X-Plex-Token': plexToken
-        },
-        httpsAgent: this.getHttpsAgent()
-      });
+      // Check if the DELETE request was successful based on HTTP status
+      const deleteSuccessful = response.status >= 200 && response.status < 300;
       
-      const afterData = afterResponse.data.MediaContainer;
-      const afterCount = (afterData.Metadata && afterData.Metadata[0] && afterData.Metadata[0].Metadata) 
-        ? afterData.Metadata[0].Metadata.length : 0;
+      // Small delay to allow Plex server to update
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
+      // Verify the removal by checking the playlist items again
+      let afterCount = 0;
+      try {
+        const afterResponse = await axios.get(playlistItemsUrl, { 
+          params: {
+            'X-Plex-Token': plexToken
+          },
+          httpsAgent: this.getHttpsAgent()
+        });
+        afterCount = afterResponse.data.MediaContainer?.totalSize || 0;
+      } catch (error) {
+        // If items endpoint fails, playlist might be empty
+        afterCount = 0;
+      }
       
       const actualRemoved = beforeCount - afterCount;
       const attempted = item_keys.length;
       
       let resultText = `Playlist "${playlistTitle}" update:\n`;
       resultText += `• Attempted to remove: ${attempted} item(s)\n`;
+      resultText += `• Found in playlist: ${itemsToRemove.length} item(s)\n`;
       resultText += `• Actually removed: ${actualRemoved} item(s)\n`;
-      resultText += `• Playlist size: ${beforeCount} → ${afterCount} items\n`;
+      resultText += `• Playlist size: ${beforeCount} → ${afterCount} items\n\n`;
+      
+      // Add warning about Plex behavior
+      if (itemsToRemove.length > 0) {
+        resultText += `⚠️ **Important**: Plex removes ALL instances of matching items from playlists.\n`;
+        resultText += `If you had duplicate tracks, all copies were removed.\n\n`;
+      }
       
       if (actualRemoved === attempted) {
         resultText += `✅ All items removed successfully!`;
       } else if (actualRemoved > 0) {
         resultText += `⚠️ Partial success: ${attempted - actualRemoved} item(s) were not found in the playlist`;
+      } else if (deleteSuccessful && itemsToRemove.length > 0) {
+        resultText += `✅ API request successful! Items were processed.\n`;
+        resultText += `ℹ️ If count didn't change, items may have already been removed previously.`;
+      } else if (deleteSuccessful) {
+        resultText += `✅ API request successful! Items may not have been in the playlist.\n`;
+        resultText += `ℹ️ This is normal behavior - Plex ignores requests to remove non-existent items.`;
       } else {
         resultText += `❌ No items were removed. This may indicate:\n`;
         resultText += `  - Invalid item IDs\n`;
@@ -1949,11 +2151,27 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
         ],
       };
     } catch (error) {
+      // Enhanced error handling with specific error types
+      let errorMessage = `Error removing items from playlist: ${error.message}`;
+      
+      if (error.response) {
+        const status = error.response.status;
+        if (status === 404) {
+          errorMessage = `Playlist with ID ${playlist_id} not found`;
+        } else if (status === 401 || status === 403) {
+          errorMessage = `Permission denied: Check your Plex token and server access`;
+        } else if (status >= 500) {
+          errorMessage = `Plex server error (${status}): ${error.message}`;
+        }
+      } else if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND') {
+        errorMessage = `Cannot connect to Plex server: Check PLEX_URL configuration`;
+      }
+      
       return {
         content: [
           {
             type: "text",
-            text: `Error removing items from playlist: ${error.message}`,
+            text: errorMessage,
           },
         ],
         isError: true,

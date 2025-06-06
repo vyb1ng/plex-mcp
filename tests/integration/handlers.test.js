@@ -266,36 +266,49 @@ describe('Handler Integration Tests', () => {
 
   describe('handleAddToPlaylist', () => {
     it('should handle adding items to playlist', async () => {
-      // Mock GET request for playlist info (before and after)
-      const mockPlaylistData = {
+      // Mock playlist info endpoint
+      const mockPlaylistInfo = {
         MediaContainer: {
           Metadata: [{
             title: 'Test Playlist',
-            ratingKey: 'pl123',
-            Metadata: [{ title: 'Item 1' }, { title: 'Item 2' }] // 2 existing items
+            ratingKey: 'pl123'
           }]
         }
       };
       
-      const mockPlaylistDataAfter = {
+      // Mock playlist items endpoints (before and after)
+      const mockPlaylistItemsBefore = {
         MediaContainer: {
-          Metadata: [{
-            title: 'Test Playlist',
-            ratingKey: 'pl123',
-            Metadata: [
-              { title: 'Item 1' }, 
-              { title: 'Item 2' }, 
-              { title: 'Item 3' }, 
-              { title: 'Item 4' }, 
-              { title: 'Item 5' }
-            ] // 5 items after adding 3
-          }]
+          totalSize: 2,
+          Metadata: [{ title: 'Item 1' }, { title: 'Item 2' }] // 2 existing items
         }
       };
       
-      mockAxios.onGet(new RegExp('/playlists/pl123')).replyOnce(200, mockPlaylistData);
+      const mockPlaylistItemsAfter = {
+        MediaContainer: {
+          totalSize: 5,
+          Metadata: [
+            { title: 'Item 1' }, 
+            { title: 'Item 2' }, 
+            { title: 'Item 3' }, 
+            { title: 'Item 4' }, 
+            { title: 'Item 5' }
+          ] // 5 items after adding 3
+        }
+      };
+      
+      // Mock server info endpoint for machine identifier
+      const mockServerInfo = {
+        MediaContainer: {
+          machineIdentifier: 'test-machine-123'
+        }
+      };
+      
+      mockAxios.onGet(new RegExp('/$')).reply(200, mockServerInfo);
+      mockAxios.onGet(new RegExp('/playlists/pl123$')).reply(200, mockPlaylistInfo);
+      mockAxios.onGet(new RegExp('/playlists/pl123/items')).replyOnce(200, mockPlaylistItemsBefore);
       mockAxios.onPut().reply(200, {});
-      mockAxios.onGet(new RegExp('/playlists/pl123')).replyOnce(200, mockPlaylistDataAfter);
+      mockAxios.onGet(new RegExp('/playlists/pl123/items')).replyOnce(200, mockPlaylistItemsAfter);
 
       const result = await server.handleAddToPlaylist({
         playlist_id: 'pl123',
@@ -306,34 +319,93 @@ describe('Handler Integration Tests', () => {
       expect(result.content[0].text).toContain('Actually added: 3 item(s)');
       expect(result.content[0].text).toContain('All items added successfully');
     });
+
+    it('should handle adding duplicate items (successful API call, no count change)', async () => {
+      // Mock playlist info endpoint
+      const mockPlaylistInfo = {
+        MediaContainer: {
+          Metadata: [{
+            title: 'Test Playlist',
+            ratingKey: 'pl123'
+          }]
+        }
+      };
+      
+      // Mock playlist items endpoints (same count before and after - duplicates)
+      const mockPlaylistItems = {
+        MediaContainer: {
+          totalSize: 2,
+          Metadata: [{ title: 'Item 1' }, { title: 'Item 2' }] // Same count
+        }
+      };
+      
+      // Mock server info endpoint for machine identifier
+      const mockServerInfo = {
+        MediaContainer: {
+          machineIdentifier: 'test-machine-123'
+        }
+      };
+      
+      mockAxios.onGet(new RegExp('/$')).reply(200, mockServerInfo);
+      mockAxios.onGet(new RegExp('/playlists/pl123$')).reply(200, mockPlaylistInfo);
+      mockAxios.onGet(new RegExp('/playlists/pl123/items')).reply(200, mockPlaylistItems);
+      mockAxios.onPut().reply(200, {}); // Successful HTTP response
+
+      const result = await server.handleAddToPlaylist({
+        playlist_id: 'pl123',
+        item_keys: ['item1', 'item2'] // These are duplicates
+      });
+
+      expect(result.content[0].text).toContain('Attempted to add: 2 item(s)');
+      expect(result.content[0].text).toContain('Actually added: 0 item(s)');
+      expect(result.content[0].text).toContain('API request successful!');
+      expect(result.content[0].text).toContain('duplicates');
+    });
   });
 
   describe('handleRemoveFromPlaylist', () => {
     it('should handle removing items from playlist', async () => {
-      // Mock GET request for playlist info (before and after)
-      const mockPlaylistDataBefore = {
+      // Mock playlist info endpoint
+      const mockPlaylistInfo = {
         MediaContainer: {
           Metadata: [{
             title: 'Test Playlist',
-            ratingKey: 'pl123',
-            Metadata: [{ title: 'Item 1' }, { title: 'Item 2' }, { title: 'Item 3' }] // 3 existing items
+            ratingKey: 'pl123'
           }]
         }
       };
       
-      const mockPlaylistDataAfter = {
+      // Mock playlist items endpoints (before and after)
+      const mockPlaylistItemsBefore = {
         MediaContainer: {
-          Metadata: [{
-            title: 'Test Playlist',
-            ratingKey: 'pl123',
-            Metadata: [{ title: 'Item 1' }] // 1 item after removing 2
-          }]
+          totalSize: 3,
+          Metadata: [
+            { title: 'Item 1', ratingKey: 'item1' }, 
+            { title: 'Item 2', ratingKey: 'item2' }, 
+            { title: 'Item 3', ratingKey: 'item3' }
+          ] // 3 existing items
         }
       };
       
-      mockAxios.onGet(new RegExp('/playlists/pl123')).replyOnce(200, mockPlaylistDataBefore);
+      const mockPlaylistItemsAfter = {
+        MediaContainer: {
+          totalSize: 1,
+          Metadata: [{ title: 'Item 3', ratingKey: 'item3' }] // 1 item after removing 2
+        }
+      };
+      
+      // Mock server info endpoint for machine identifier
+      const mockServerInfo = {
+        MediaContainer: {
+          machineIdentifier: 'test-machine-123'
+        }
+      };
+      
+      mockAxios.onGet(new RegExp('/$')).reply(200, mockServerInfo);
+      mockAxios.onGet(new RegExp('/playlists/pl123$')).reply(200, mockPlaylistInfo);
+      mockAxios.onGet(new RegExp('/playlists/pl123/items')).replyOnce(200, mockPlaylistItemsBefore);
       mockAxios.onDelete().reply(200, {});
-      mockAxios.onGet(new RegExp('/playlists/pl123')).replyOnce(200, mockPlaylistDataAfter);
+      mockAxios.onGet(new RegExp('/playlists/pl123/items')).replyOnce(200, mockPlaylistItemsAfter);
 
       const result = await server.handleRemoveFromPlaylist({
         playlist_id: 'pl123',
@@ -343,6 +415,50 @@ describe('Handler Integration Tests', () => {
       expect(result.content[0].text).toContain('Attempted to remove: 2 item(s)');
       expect(result.content[0].text).toContain('Actually removed: 2 item(s)');
       expect(result.content[0].text).toContain('All items removed successfully');
+    });
+
+    it('should handle removing non-existent items (successful API call, no count change)', async () => {
+      // Mock playlist info endpoint
+      const mockPlaylistInfo = {
+        MediaContainer: {
+          Metadata: [{
+            title: 'Test Playlist',
+            ratingKey: 'pl123'
+          }]
+        }
+      };
+      
+      // Mock playlist items endpoints (same count before and after - items don't exist)
+      const mockPlaylistItems = {
+        MediaContainer: {
+          totalSize: 3,
+          Metadata: [
+            { title: 'Item 1', ratingKey: 'item1' }, 
+            { title: 'Item 2', ratingKey: 'item2' }, 
+            { title: 'Item 3', ratingKey: 'item3' }
+          ] // Items with different keys than what we're trying to remove (item999, item888)
+        }
+      };
+      
+      // Mock server info endpoint for machine identifier
+      const mockServerInfo = {
+        MediaContainer: {
+          machineIdentifier: 'test-machine-123'
+        }
+      };
+      
+      mockAxios.onGet(new RegExp('/$')).reply(200, mockServerInfo);
+      mockAxios.onGet(new RegExp('/playlists/pl123$')).reply(200, mockPlaylistInfo);
+      mockAxios.onGet(new RegExp('/playlists/pl123/items')).reply(200, mockPlaylistItems);
+      mockAxios.onDelete().reply(200, {}); // Successful HTTP response
+
+      const result = await server.handleRemoveFromPlaylist({
+        playlist_id: 'pl123',
+        item_keys: ['item999', 'item888'] // These don't exist in playlist
+      });
+
+      expect(result.content[0].text).toContain('No matching items found in playlist');
+      expect(result.content[0].text).toContain('Specified items may not exist in this playlist');
     });
   });
 
