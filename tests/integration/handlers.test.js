@@ -266,27 +266,83 @@ describe('Handler Integration Tests', () => {
 
   describe('handleAddToPlaylist', () => {
     it('should handle adding items to playlist', async () => {
+      // Mock GET request for playlist info (before and after)
+      const mockPlaylistData = {
+        MediaContainer: {
+          Metadata: [{
+            title: 'Test Playlist',
+            ratingKey: 'pl123',
+            Metadata: [{ title: 'Item 1' }, { title: 'Item 2' }] // 2 existing items
+          }]
+        }
+      };
+      
+      const mockPlaylistDataAfter = {
+        MediaContainer: {
+          Metadata: [{
+            title: 'Test Playlist',
+            ratingKey: 'pl123',
+            Metadata: [
+              { title: 'Item 1' }, 
+              { title: 'Item 2' }, 
+              { title: 'Item 3' }, 
+              { title: 'Item 4' }, 
+              { title: 'Item 5' }
+            ] // 5 items after adding 3
+          }]
+        }
+      };
+      
+      mockAxios.onGet(new RegExp('/playlists/pl123')).replyOnce(200, mockPlaylistData);
       mockAxios.onPut().reply(200, {});
+      mockAxios.onGet(new RegExp('/playlists/pl123')).replyOnce(200, mockPlaylistDataAfter);
 
       const result = await server.handleAddToPlaylist({
         playlist_id: 'pl123',
         item_keys: ['item1', 'item2', 'item3']
       });
 
-      expect(result.content[0].text).toContain('Successfully added 3 item(s) to playlist pl123');
+      expect(result.content[0].text).toContain('Attempted to add: 3 item(s)');
+      expect(result.content[0].text).toContain('Actually added: 3 item(s)');
+      expect(result.content[0].text).toContain('All items added successfully');
     });
   });
 
   describe('handleRemoveFromPlaylist', () => {
     it('should handle removing items from playlist', async () => {
+      // Mock GET request for playlist info (before and after)
+      const mockPlaylistDataBefore = {
+        MediaContainer: {
+          Metadata: [{
+            title: 'Test Playlist',
+            ratingKey: 'pl123',
+            Metadata: [{ title: 'Item 1' }, { title: 'Item 2' }, { title: 'Item 3' }] // 3 existing items
+          }]
+        }
+      };
+      
+      const mockPlaylistDataAfter = {
+        MediaContainer: {
+          Metadata: [{
+            title: 'Test Playlist',
+            ratingKey: 'pl123',
+            Metadata: [{ title: 'Item 1' }] // 1 item after removing 2
+          }]
+        }
+      };
+      
+      mockAxios.onGet(new RegExp('/playlists/pl123')).replyOnce(200, mockPlaylistDataBefore);
       mockAxios.onDelete().reply(200, {});
+      mockAxios.onGet(new RegExp('/playlists/pl123')).replyOnce(200, mockPlaylistDataAfter);
 
       const result = await server.handleRemoveFromPlaylist({
         playlist_id: 'pl123',
         item_keys: ['item1', 'item2']
       });
 
-      expect(result.content[0].text).toContain('Successfully removed 2 item(s) from playlist pl123');
+      expect(result.content[0].text).toContain('Attempted to remove: 2 item(s)');
+      expect(result.content[0].text).toContain('Actually removed: 2 item(s)');
+      expect(result.content[0].text).toContain('All items removed successfully');
     });
   });
 

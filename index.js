@@ -25,6 +25,14 @@ class PlexMCPServer {
     this.setupToolHandlers();
   }
 
+  getHttpsAgent() {
+    const verifySSL = process.env.PLEX_VERIFY_SSL !== 'false';
+    return new (require('https').Agent)({
+      rejectUnauthorized: verifySSL,
+      minVersion: 'TLSv1.2'
+    });
+  }
+
   setupToolHandlers() {
     this.server.setRequestHandler(ListToolsRequestSchema, async () => {
       return {
@@ -381,6 +389,25 @@ class PlexMCPServer {
             },
           },
           {
+            name: "browse_playlist",
+            description: "Browse and view the contents of a specific playlist with full track metadata",
+            inputSchema: {
+              type: "object",
+              properties: {
+                playlist_id: {
+                  type: "string",
+                  description: "The ID of the playlist to browse",
+                },
+                limit: {
+                  type: "number",
+                  description: "Maximum number of items to return (default: 50)",
+                  default: 50,
+                },
+              },
+              required: ["playlist_id"],
+            },
+          },
+          {
             name: "create_playlist",
             description: "Create a new playlist on the Plex server. Note: Non-smart playlists require an initial item (item_key parameter) to be created successfully.",
             inputSchema: {
@@ -611,6 +638,8 @@ class PlexMCPServer {
           return await this.handleOnDeck(request.params.arguments);
         case "list_playlists":
           return await this.handleListPlaylists(request.params.arguments);
+        case "browse_playlist":
+          return await this.handleBrowsePlaylist(request.params.arguments);
         case "create_playlist":
           return await this.handleCreatePlaylist(request.params.arguments);
         case "add_to_playlist":
@@ -690,10 +719,7 @@ class PlexMCPServer {
 
       const response = await axios.get(searchUrl, { 
         params,
-        httpsAgent: new (require('https').Agent)({
-          rejectUnauthorized: false,
-          minVersion: 'TLSv1.2'
-        })
+        httpsAgent: this.getHttpsAgent()
       });
       
       let results = this.parseSearchResults(response.data);
@@ -786,6 +812,12 @@ class PlexMCPServer {
       contentRating: item.contentRating,
       Media: item.Media,
       key: item.key,
+      ratingKey: item.ratingKey, // Critical: the unique identifier for playlist operations
+      // Additional hierarchical info for music tracks
+      parentTitle: item.parentTitle, // Album name
+      grandparentTitle: item.grandparentTitle, // Artist name
+      parentRatingKey: item.parentRatingKey, // Album ID
+      grandparentRatingKey: item.grandparentRatingKey, // Artist ID
       // Additional metadata for basic filters
       studio: item.studio,
       genres: item.Genre ? item.Genre.map(g => g.tag) : [],
@@ -807,8 +839,24 @@ class PlexMCPServer {
         formatted += ` - ${item.type}`;
       }
       
+      // Add artist/album info for music tracks
+      if (item.grandparentTitle && item.parentTitle) {
+        formatted += `\n   Artist: ${item.grandparentTitle} | Album: ${item.parentTitle}`;
+      } else if (item.parentTitle) {
+        formatted += `\n   Album/Show: ${item.parentTitle}`;
+      }
+      
       if (item.rating) {
-        formatted += ` - Rating: ${item.rating}`;
+        formatted += `\n   Rating: ${item.rating}`;
+      }
+      
+      if (item.duration) {
+        formatted += `\n   Duration: ${this.formatDuration(item.duration)}`;
+      }
+      
+      // CRITICAL: Show the ratingKey for playlist operations
+      if (item.ratingKey) {
+        formatted += `\n   **ID: ${item.ratingKey}** (use this for playlists)`;
       }
       
       if (item.summary) {
@@ -817,6 +865,21 @@ class PlexMCPServer {
       
       return formatted;
     }).join('\n\n');
+  }
+
+  formatDuration(milliseconds) {
+    if (!milliseconds || milliseconds === 0) return 'Unknown';
+    
+    const seconds = Math.floor(milliseconds / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+    
+    if (hours > 0) {
+      const remainingMinutes = minutes % 60;
+      return `${hours}h ${remainingMinutes}m`;
+    } else {
+      return `${minutes}m`;
+    }
   }
 
   async handleBrowseLibraries(args) {
@@ -835,10 +898,7 @@ class PlexMCPServer {
 
       const response = await axios.get(librariesUrl, { 
         params,
-        httpsAgent: new (require('https').Agent)({
-          rejectUnauthorized: false,
-          minVersion: 'TLSv1.2'
-        })
+        httpsAgent: this.getHttpsAgent()
       });
       
       const libraries = this.parseLibraries(response.data);
@@ -965,10 +1025,7 @@ class PlexMCPServer {
 
       const response = await axios.get(libraryUrl, { 
         params,
-        httpsAgent: new (require('https').Agent)({
-          rejectUnauthorized: false,
-          minVersion: 'TLSv1.2'
-        })
+        httpsAgent: this.getHttpsAgent()
       });
       
       let results = this.parseLibraryContent(response.data);
@@ -1090,10 +1147,7 @@ class PlexMCPServer {
 
       const response = await axios.get(recentUrl, { 
         params,
-        httpsAgent: new (require('https').Agent)({
-          rejectUnauthorized: false,
-          minVersion: 'TLSv1.2'
-        })
+        httpsAgent: this.getHttpsAgent()
       });
       
       const results = this.parseLibraryContent(response.data);
@@ -1191,10 +1245,7 @@ class PlexMCPServer {
 
       const response = await axios.get(historyUrl, { 
         params,
-        httpsAgent: new (require('https').Agent)({
-          rejectUnauthorized: false,
-          minVersion: 'TLSv1.2'
-        })
+        httpsAgent: this.getHttpsAgent()
       });
       
       const results = this.parseWatchHistory(response.data);
@@ -1314,10 +1365,7 @@ class PlexMCPServer {
 
       const response = await axios.get(onDeckUrl, { 
         params,
-        httpsAgent: new (require('https').Agent)({
-          rejectUnauthorized: false,
-          minVersion: 'TLSv1.2'
-        })
+        httpsAgent: this.getHttpsAgent()
       });
       
       const results = this.parseOnDeck(response.data);
@@ -1423,10 +1471,7 @@ class PlexMCPServer {
 
       const response = await axios.get(playlistsUrl, { 
         params,
-        httpsAgent: new (require('https').Agent)({
-          rejectUnauthorized: false,
-          minVersion: 'TLSv1.2'
-        })
+        httpsAgent: this.getHttpsAgent()
       });
       
       const playlists = this.parsePlaylists(response.data);
@@ -1454,6 +1499,120 @@ class PlexMCPServer {
         isError: true,
       };
     }
+  }
+
+  async handleBrowsePlaylist(args) {
+    const { playlist_id, limit = 50 } = args;
+    
+    try {
+      const plexUrl = process.env.PLEX_URL || 'http://localhost:32400';
+      const plexToken = process.env.PLEX_TOKEN;
+      
+      if (!plexToken) {
+        throw new Error('PLEX_TOKEN environment variable is required');
+      }
+
+      // First get playlist info
+      const playlistUrl = `${plexUrl}/playlists/${playlist_id}`;
+      const response = await axios.get(playlistUrl, { 
+        params: {
+          'X-Plex-Token': plexToken
+        },
+        httpsAgent: this.getHttpsAgent()
+      });
+      
+      const playlistData = response.data.MediaContainer;
+      if (!playlistData || !playlistData.Metadata || playlistData.Metadata.length === 0) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Playlist with ID ${playlist_id} not found or is empty`,
+            },
+          ],
+        };
+      }
+
+      const playlist = playlistData.Metadata[0];
+      const items = playlistData.Metadata[0].Metadata || [];
+      
+      // Limit results if specified
+      const limitedItems = limit ? items.slice(0, limit) : items;
+      
+      let resultText = `**${playlist.title}**`;
+      if (playlist.smart) {
+        resultText += ` (Smart Playlist)`;
+      }
+      resultText += `\n`;
+      if (playlist.summary) {
+        resultText += `${playlist.summary}\n`;
+      }
+      resultText += `Duration: ${this.formatDuration(playlist.duration || 0)}\n`;
+      resultText += `Items: ${items.length}`;
+      if (limit && items.length > limit) {
+        resultText += ` (showing first ${limit})`;
+      }
+      resultText += `\n\n`;
+
+      if (limitedItems.length === 0) {
+        resultText += `This playlist is empty.`;
+      } else {
+        resultText += limitedItems.map((item, index) => {
+          let itemText = `${index + 1}. **${item.title}**`;
+          
+          // Add artist/album info for music
+          if (item.grandparentTitle && item.parentTitle) {
+            itemText += `\n   Artist: ${item.grandparentTitle}\n   Album: ${item.parentTitle}`;
+          } else if (item.parentTitle) {
+            itemText += `\n   Album/Show: ${item.parentTitle}`;
+          }
+          
+          // Add duration
+          if (item.duration) {
+            itemText += `\n   Duration: ${this.formatDuration(item.duration)}`;
+          }
+          
+          // Add rating key for identification
+          itemText += `\n   ID: ${item.ratingKey}`;
+          
+          // Add media type
+          const mediaType = this.getMediaTypeFromItem(item);
+          if (mediaType) {
+            itemText += `\n   Type: ${mediaType}`;
+          }
+          
+          return itemText;
+        }).join('\n\n');
+      }
+      
+      return {
+        content: [
+          {
+            type: "text",
+            text: resultText,
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error browsing playlist: ${error.message}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  }
+
+  getMediaTypeFromItem(item) {
+    if (item.type === 'track') return 'Music Track';
+    if (item.type === 'episode') return 'TV Episode';
+    if (item.type === 'movie') return 'Movie';
+    if (item.type === 'artist') return 'Artist';
+    if (item.type === 'album') return 'Album';
+    return item.type || 'Unknown';
   }
 
   parsePlaylists(data) {
@@ -1540,10 +1699,7 @@ class PlexMCPServer {
       // First get server info to get machine identifier
       const serverResponse = await axios.get(`${plexUrl}/`, {
         headers: { 'X-Plex-Token': plexToken },
-        httpsAgent: new (require('https').Agent)({
-          rejectUnauthorized: false,
-          minVersion: 'TLSv1.2'
-        })
+        httpsAgent: this.getHttpsAgent()
       });
 
       const machineIdentifier = serverResponse.data?.MediaContainer?.machineIdentifier;
@@ -1576,20 +1732,22 @@ class PlexMCPServer {
         headers: {
           'Content-Length': '0'
         },
-        httpsAgent: new (require('https').Agent)({
-          rejectUnauthorized: false,
-          minVersion: 'TLSv1.2'
-        })
+        httpsAgent: this.getHttpsAgent()
       });
       
       // Get the created playlist info from the response
       const playlistData = response.data?.MediaContainer?.Metadata?.[0];
       
-      let resultText = `Successfully created ${smart ? 'smart ' : ''}playlist: **${title}**`;
+      let resultText = `✅ Successfully created ${smart ? 'smart ' : ''}playlist: **${title}**`;
       if (playlistData) {
-        resultText += `\n   Playlist ID: ${playlistData.ratingKey}`;
+        resultText += `\n   **Playlist ID: ${playlistData.ratingKey}** (use this ID for future operations)`;
         resultText += `\n   Type: ${type}`;
         if (smart) resultText += `\n   Smart Playlist: Yes`;
+        if (item_key && !smart) {
+          resultText += `\n   Initial item added: ${item_key}`;
+        }
+      } else {
+        resultText += `\n   ⚠️ Playlist created but details not available - check your playlists`;
       }
       
       return {
@@ -1636,6 +1794,21 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
         throw new Error('PLEX_TOKEN environment variable is required');
       }
 
+      // Get playlist info before adding items
+      const playlistUrl = `${plexUrl}/playlists/${playlist_id}`;
+      const beforeResponse = await axios.get(playlistUrl, { 
+        params: {
+          'X-Plex-Token': plexToken
+        },
+        httpsAgent: this.getHttpsAgent()
+      });
+      
+      const beforeData = beforeResponse.data.MediaContainer;
+      const beforeCount = (beforeData.Metadata && beforeData.Metadata[0] && beforeData.Metadata[0].Metadata) 
+        ? beforeData.Metadata[0].Metadata.length : 0;
+      const playlistTitle = beforeData.Metadata && beforeData.Metadata[0] 
+        ? beforeData.Metadata[0].title : `Playlist ${playlist_id}`;
+
       const addUrl = `${plexUrl}/playlists/${playlist_id}/items`;
       const params = {
         'X-Plex-Token': plexToken,
@@ -1644,13 +1817,39 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
 
       const response = await axios.put(addUrl, null, { 
         params,
-        httpsAgent: new (require('https').Agent)({
-          rejectUnauthorized: false,
-          minVersion: 'TLSv1.2'
-        })
+        httpsAgent: this.getHttpsAgent()
       });
       
-      const resultText = `Successfully added ${item_keys.length} item(s) to playlist ${playlist_id}`;
+      // Verify the addition by checking the playlist again
+      const afterResponse = await axios.get(playlistUrl, { 
+        params: {
+          'X-Plex-Token': plexToken
+        },
+        httpsAgent: this.getHttpsAgent()
+      });
+      
+      const afterData = afterResponse.data.MediaContainer;
+      const afterCount = (afterData.Metadata && afterData.Metadata[0] && afterData.Metadata[0].Metadata) 
+        ? afterData.Metadata[0].Metadata.length : 0;
+      
+      const actualAdded = afterCount - beforeCount;
+      const attempted = item_keys.length;
+      
+      let resultText = `Playlist "${playlistTitle}" update:\n`;
+      resultText += `• Attempted to add: ${attempted} item(s)\n`;
+      resultText += `• Actually added: ${actualAdded} item(s)\n`;
+      resultText += `• Playlist size: ${beforeCount} → ${afterCount} items\n`;
+      
+      if (actualAdded === attempted) {
+        resultText += `✅ All items added successfully!`;
+      } else if (actualAdded > 0) {
+        resultText += `⚠️ Partial success: ${attempted - actualAdded} item(s) may have been duplicates or invalid`;
+      } else {
+        resultText += `❌ No items were added. This may indicate:\n`;
+        resultText += `  - Invalid item IDs (use ratingKey from search results)\n`;
+        resultText += `  - Items already exist in playlist\n`;
+        resultText += `  - Permission issues`;
+      }
       
       return {
         content: [
@@ -1684,6 +1883,21 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
         throw new Error('PLEX_TOKEN environment variable is required');
       }
 
+      // Get playlist info before removing items
+      const playlistUrl = `${plexUrl}/playlists/${playlist_id}`;
+      const beforeResponse = await axios.get(playlistUrl, { 
+        params: {
+          'X-Plex-Token': plexToken
+        },
+        httpsAgent: this.getHttpsAgent()
+      });
+      
+      const beforeData = beforeResponse.data.MediaContainer;
+      const beforeCount = (beforeData.Metadata && beforeData.Metadata[0] && beforeData.Metadata[0].Metadata) 
+        ? beforeData.Metadata[0].Metadata.length : 0;
+      const playlistTitle = beforeData.Metadata && beforeData.Metadata[0] 
+        ? beforeData.Metadata[0].title : `Playlist ${playlist_id}`;
+
       const removeUrl = `${plexUrl}/playlists/${playlist_id}/items`;
       const params = {
         'X-Plex-Token': plexToken,
@@ -1692,13 +1906,39 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
 
       const response = await axios.delete(removeUrl, { 
         params,
-        httpsAgent: new (require('https').Agent)({
-          rejectUnauthorized: false,
-          minVersion: 'TLSv1.2'
-        })
+        httpsAgent: this.getHttpsAgent()
       });
       
-      const resultText = `Successfully removed ${item_keys.length} item(s) from playlist ${playlist_id}`;
+      // Verify the removal by checking the playlist again
+      const afterResponse = await axios.get(playlistUrl, { 
+        params: {
+          'X-Plex-Token': plexToken
+        },
+        httpsAgent: this.getHttpsAgent()
+      });
+      
+      const afterData = afterResponse.data.MediaContainer;
+      const afterCount = (afterData.Metadata && afterData.Metadata[0] && afterData.Metadata[0].Metadata) 
+        ? afterData.Metadata[0].Metadata.length : 0;
+      
+      const actualRemoved = beforeCount - afterCount;
+      const attempted = item_keys.length;
+      
+      let resultText = `Playlist "${playlistTitle}" update:\n`;
+      resultText += `• Attempted to remove: ${attempted} item(s)\n`;
+      resultText += `• Actually removed: ${actualRemoved} item(s)\n`;
+      resultText += `• Playlist size: ${beforeCount} → ${afterCount} items\n`;
+      
+      if (actualRemoved === attempted) {
+        resultText += `✅ All items removed successfully!`;
+      } else if (actualRemoved > 0) {
+        resultText += `⚠️ Partial success: ${attempted - actualRemoved} item(s) were not found in the playlist`;
+      } else {
+        resultText += `❌ No items were removed. This may indicate:\n`;
+        resultText += `  - Invalid item IDs\n`;
+        resultText += `  - Items not present in playlist\n`;
+        resultText += `  - Permission issues`;
+      }
       
       return {
         content: [
@@ -1739,10 +1979,7 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
 
       const response = await axios.delete(deleteUrl, { 
         params,
-        httpsAgent: new (require('https').Agent)({
-          rejectUnauthorized: false,
-          minVersion: 'TLSv1.2'
-        })
+        httpsAgent: this.getHttpsAgent()
       });
       
       const resultText = `Successfully deleted playlist ${playlist_id}`;
@@ -1795,10 +2032,7 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
 
           const response = await axios.get(itemUrl, { 
             params,
-            httpsAgent: new (require('https').Agent)({
-              rejectUnauthorized: false,
-              minVersion: 'TLSv1.2'
-            })
+            httpsAgent: this.getHttpsAgent()
           });
           
           const item = response.data?.MediaContainer?.Metadata?.[0];
@@ -2242,10 +2476,7 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
 
       const response = await axios.get(collectionsUrl, { 
         params,
-        httpsAgent: new (require('https').Agent)({
-          rejectUnauthorized: false,
-          minVersion: 'TLSv1.2'
-        })
+        httpsAgent: this.getHttpsAgent()
       });
       
       const collections = this.parseCollections(response.data);
@@ -2296,10 +2527,7 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
 
       const response = await axios.get(collectionUrl, { 
         params,
-        httpsAgent: new (require('https').Agent)({
-          rejectUnauthorized: false,
-          minVersion: 'TLSv1.2'
-        })
+        httpsAgent: this.getHttpsAgent()
       });
       
       const results = this.parseLibraryContent(response.data);
@@ -2399,10 +2627,7 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
 
       const response = await axios.get(mediaUrl, { 
         params,
-        httpsAgent: new (require('https').Agent)({
-          rejectUnauthorized: false,
-          minVersion: 'TLSv1.2'
-        })
+        httpsAgent: this.getHttpsAgent()
       });
       
       const item = response.data?.MediaContainer?.Metadata?.[0];
@@ -2691,10 +2916,7 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
       // Get library information first
       const librariesResponse = await axios.get(`${plexUrl}/library/sections`, { 
         params: { 'X-Plex-Token': plexToken },
-        httpsAgent: new (require('https').Agent)({
-          rejectUnauthorized: false,
-          minVersion: 'TLSv1.2'
-        })
+        httpsAgent: this.getHttpsAgent()
       });
       
       const libraries = this.parseLibraries(librariesResponse.data);
@@ -2783,10 +3005,7 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
             'X-Plex-Container-Start': offset,
             'X-Plex-Container-Size': batchSize
           },
-          httpsAgent: new (require('https').Agent)({
-            rejectUnauthorized: false,
-            minVersion: 'TLSv1.2'
-          })
+          httpsAgent: this.getHttpsAgent()
         });
 
         const content = this.parseLibraryContent(contentResponse.data);
@@ -2827,10 +3046,7 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
             try {
               const mediaResponse = await axios.get(`${plexUrl}${item.key}`, { 
                 params: { 'X-Plex-Token': plexToken },
-                httpsAgent: new (require('https').Agent)({
-                  rejectUnauthorized: false,
-                  minVersion: 'TLSv1.2'
-                })
+                httpsAgent: this.getHttpsAgent()
               });
               
               const detailedItem = mediaResponse.data?.MediaContainer?.Metadata?.[0];
@@ -3059,10 +3275,7 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
       } else {
         const librariesResponse = await axios.get(`${plexUrl}/library/sections`, { 
           params: { 'X-Plex-Token': plexToken },
-          httpsAgent: new (require('https').Agent)({
-            rejectUnauthorized: false,
-            minVersion: 'TLSv1.2'
-          })
+          httpsAgent: this.getHttpsAgent()
         });
         
         const allLibraries = this.parseLibraries(librariesResponse.data);
@@ -3165,10 +3378,7 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
     try {
       const historyResponse = await axios.get(`${plexUrl}/status/sessions/history/all`, { 
         params: historyParams,
-        httpsAgent: new (require('https').Agent)({
-          rejectUnauthorized: false,
-          minVersion: 'TLSv1.2'
-        })
+        httpsAgent: this.getHttpsAgent()
       });
       
       const history = this.parseWatchHistory(historyResponse.data);
@@ -3249,10 +3459,7 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
                 query: trackName,
                 type: 10 // Track type
               },
-              httpsAgent: new (require('https').Agent)({
-                rejectUnauthorized: false,
-                minVersion: 'TLSv1.2'
-              })
+              httpsAgent: this.getHttpsAgent()
             });
             
             const tracks = this.parseSearchResults(searchResponse.data);
@@ -3260,10 +3467,7 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
               if (track.key) {
                 const trackDetailResponse = await axios.get(`${plexUrl}${track.key}`, {
                   params: { 'X-Plex-Token': plexToken },
-                  httpsAgent: new (require('https').Agent)({
-                    rejectUnauthorized: false,
-                    minVersion: 'TLSv1.2'
-                  })
+                  httpsAgent: this.getHttpsAgent()
                 });
                 
                 const trackDetail = trackDetailResponse.data?.MediaContainer?.Metadata?.[0];
@@ -3308,10 +3512,7 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
                 'X-Plex-Container-Size': 10,
                 sort: 'addedAt:desc' // Recently added first
               },
-              httpsAgent: new (require('https').Agent)({
-                rejectUnauthorized: false,
-                minVersion: 'TLSv1.2'
-              })
+              httpsAgent: this.getHttpsAgent()
             });
             
             const tracks = this.parseLibraryContent(genreSearchResponse.data);
@@ -3342,10 +3543,7 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
                 query: artist,
                 type: 8 // Artist type
               },
-              httpsAgent: new (require('https').Agent)({
-                rejectUnauthorized: false,
-                minVersion: 'TLSv1.2'
-              })
+              httpsAgent: this.getHttpsAgent()
             });
             
             const artists = this.parseSearchResults(artistSearchResponse.data);
@@ -3353,10 +3551,7 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
               if (foundArtist.key) {
                 const artistDetailResponse = await axios.get(`${plexUrl}${foundArtist.key}`, {
                   params: { 'X-Plex-Token': plexToken },
-                  httpsAgent: new (require('https').Agent)({
-                    rejectUnauthorized: false,
-                    minVersion: 'TLSv1.2'
-                  })
+                  httpsAgent: this.getHttpsAgent()
                 });
                 
                 const artistTracks = this.parseLibraryContent(artistDetailResponse.data);

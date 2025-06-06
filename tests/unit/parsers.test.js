@@ -33,6 +33,12 @@ describe('Parser Functions', () => {
         contentRating: undefined,
         Media: undefined,
         key: '/library/metadata/12345',
+        ratingKey: '12345',
+        // Additional hierarchical info for music tracks
+        parentTitle: undefined,
+        grandparentTitle: undefined,
+        parentRatingKey: undefined,
+        grandparentRatingKey: undefined,
         // Additional metadata for basic filters
         studio: undefined,
         genres: [],

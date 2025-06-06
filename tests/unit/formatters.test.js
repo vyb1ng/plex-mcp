@@ -21,7 +21,8 @@ describe('Formatter Functions', () => {
 
       const formatted = server.formatResults(results);
       
-      expect(formatted).toContain('1. **Test Movie** (2023) - movie - Rating: 8.5');
+      expect(formatted).toContain('1. **Test Movie** (2023) - movie');
+      expect(formatted).toContain('Rating: 8.5');
       expect(formatted).toContain('A test movie for unit testing');
     });
 
