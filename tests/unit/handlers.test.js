@@ -46,6 +46,7 @@ describe('Handler Functions Tests', () => {
         }
       };
 
+      mock.onGet().reply(200, { MediaContainer: { machineIdentifier: 'test' } });
       mock.onPost().reply(200, mockResponse);
 
       const result = await server.handleCreatePlaylist({ 

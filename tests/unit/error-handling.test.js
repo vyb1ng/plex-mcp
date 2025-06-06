@@ -34,7 +34,7 @@ describe('Error Handling Tests', () => {
     it('should handle missing PLEX_TOKEN in handleCreatePlaylist', async () => {
       delete process.env.PLEX_TOKEN;
       
-      const result = await server.handleCreatePlaylist({ title: 'Test', type: 'video' });
+      const result = await server.handleCreatePlaylist({ title: 'Test', type: 'video', item_key: '123' });
       
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('PLEX_TOKEN environment variable is required');
@@ -52,9 +52,10 @@ describe('Error Handling Tests', () => {
 
   describe('Network Error Handling', () => {
     it('should handle 400 errors in playlist creation with detailed message', async () => {
+      mock.onGet().reply(200, { MediaContainer: { machineIdentifier: 'test' } });
       mock.onPost().reply(400, '<html><head><title>Bad Request</title></head></html>');
       
-      const result = await server.handleCreatePlaylist({ title: 'Test', type: 'video' });
+      const result = await server.handleCreatePlaylist({ title: 'Test', type: 'video', item_key: '123' });
       
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('400 Bad Request');
@@ -62,9 +63,10 @@ describe('Error Handling Tests', () => {
     });
 
     it('should handle generic errors in playlist creation', async () => {
+      mock.onGet().reply(200, { MediaContainer: { machineIdentifier: 'test' } });
       mock.onPost().networkError();
       
-      const result = await server.handleCreatePlaylist({ title: 'Test', type: 'video' });
+      const result = await server.handleCreatePlaylist({ title: 'Test', type: 'video', item_key: '123' });
       
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('Error creating playlist');

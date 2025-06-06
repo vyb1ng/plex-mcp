@@ -235,12 +235,14 @@ describe('Handler Integration Tests', () => {
           ]
         }
       };
+      mockAxios.onGet().reply(200, { MediaContainer: { machineIdentifier: 'test' } });
       mockAxios.onPost().reply(200, createResponse);
 
       const result = await server.handleCreatePlaylist({
         title: 'New Test Playlist',
         type: 'audio',
-        smart: false
+        smart: false,
+        item_key: '456'
       });
 
       expect(result.content[0].text).toContain('Successfully created playlist: **New Test Playlist**');
@@ -249,6 +251,7 @@ describe('Handler Integration Tests', () => {
     });
 
     it('should handle smart playlist creation', async () => {
+      mockAxios.onGet().reply(200, { MediaContainer: { machineIdentifier: 'test' } });
       mockAxios.onPost().reply(200, { MediaContainer: { Metadata: [{}] } });
 
       const result = await server.handleCreatePlaylist({
