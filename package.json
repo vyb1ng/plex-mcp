@@ -1,5 +1,5 @@
 {
-  "name": "plex-mcp",
+  "name": "@vyb1ng/plex-mcp",
   "version": "0.0.1",
   "description": "A Model Context Protocol (MCP) server that enables Claude to query and manage Plex media libraries.",
   "main": "index.js",
@@ -22,12 +22,12 @@
   "license": "ISC",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/your-username/plex-mcp.git"
+    "url": "git+https://github.com/vyb1ng/plex-mcp.git"
   },
   "bugs": {
-    "url": "https://github.com/your-username/plex-mcp/issues"
+    "url": "https://github.com/vyb1ng/plex-mcp/issues"
   },
-  "homepage": "https://github.com/your-username/plex-mcp#readme",
+  "homepage": "https://github.com/vyb1ng/plex-mcp#readme",
   "type": "commonjs",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",
