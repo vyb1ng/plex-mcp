@@ -1,6 +1,6 @@
 {
   "name": "plex-mcp",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "A Model Context Protocol (MCP) server that enables Claude to query and manage Plex media libraries.",
   "main": "index.js",
   "bin": {
@@ -13,11 +13,18 @@
     "test:coverage": "jest --coverage",
     "prepublishOnly": "npm test",
     "version:patch": "npm version patch",
-    "version:minor": "npm version minor", 
+    "version:minor": "npm version minor",
     "version:major": "npm version major",
     "release": "npm publish"
   },
-  "keywords": ["mcp", "plex", "model-context-protocol", "claude", "media", "server"],
+  "keywords": [
+    "mcp",
+    "plex",
+    "model-context-protocol",
+    "claude",
+    "media",
+    "server"
+  ],
   "author": "",
   "license": "ISC",
   "repository": {
