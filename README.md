@@ -30,9 +30,58 @@ A Model Context Protocol (MCP) server for searching Plex media libraries using C
    - Click "Show" next to "Plex Pass Subscription"
    - Your token will be displayed
 
+## Claude Desktop Configuration
+
+### Option 1: Using npx (Recommended)
+
+Add this configuration to your Claude Desktop settings:
+
+```json
+{
+  "mcpServers": {
+    "plex": {
+      "command": "npx",
+      "args": ["plex-mcp"],
+      "env": {
+        "PLEX_URL": "http://your-plex-server:32400",
+        "PLEX_TOKEN": "your_plex_token"
+      }
+    }
+  }
+}
+```
+
+### Option 2: Local development
+
+For local development, add this configuration:
+
+```json
+{
+  "mcpServers": {
+    "plex": {
+      "command": "node",
+      "args": ["/path/to/your/plex-mcp/index.js"],
+      "env": {
+        "PLEX_URL": "http://your-plex-server:32400",
+        "PLEX_TOKEN": "your_plex_token"
+      }
+    }
+  }
+}
+```
+
+Replace `/path/to/your/plex-mcp/` with the actual path to this project directory.
+
+**Configuration Steps:**
+1. Open Claude Desktop settings (Cmd/Ctrl + ,)
+2. Navigate to the "MCP Servers" tab
+3. Add the configuration above
+4. Update `PLEX_URL` and `PLEX_TOKEN` with your Plex server details
+5. Restart Claude Desktop
+
 ## Usage
 
-Run the MCP server:
+Run the MCP server standalone:
 ```bash
 node index.js
 ```

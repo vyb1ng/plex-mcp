@@ -22,12 +22,12 @@
   "license": "ISC",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/your-username/plex-mcp.git"
+    "url": "git+https://github.com/vyb1ng/plex-mcp.git"
   },
   "bugs": {
-    "url": "https://github.com/your-username/plex-mcp/issues"
+    "url": "https://github.com/vyb1ng/plex-mcp/issues"
   },
-  "homepage": "https://github.com/your-username/plex-mcp#readme",
+  "homepage": "https://github.com/vyb1ng/plex-mcp#readme",
   "type": "commonjs",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",
