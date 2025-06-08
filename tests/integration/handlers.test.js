@@ -237,6 +237,23 @@ describe('Handler Integration Tests', () => {
       };
       mockAxios.onGet().reply(200, { MediaContainer: { machineIdentifier: 'test' } });
       mockAxios.onPost().reply(200, createResponse);
+      
+      // Mock the add operation that follows playlist creation
+      mockAxios.onGet(/\/playlists\/new123$/).reply(200, createResponse);
+      mockAxios.onGet(/\/playlists\/new123\/items$/).reply(200, { MediaContainer: { totalSize: 0 } });
+      mockAxios.onPut().reply(200);
+      // Mock verification after add
+      mockAxios.onGet(/\/playlists\/new123\/items$/).reply(200, { MediaContainer: { totalSize: 1 } });
+      // Mock final verification for create operation
+      mockAxios.onGet(/\/playlists\/new123$/).reply(200, {
+        MediaContainer: {
+          Metadata: [{
+            ratingKey: 'new123',
+            title: 'New Test Playlist',
+            playlistType: 'audio'
+          }]
+        }
+      });
 
       const result = await server.handleCreatePlaylist({
         title: 'New Test Playlist',
@@ -245,14 +262,34 @@ describe('Handler Integration Tests', () => {
         item_key: '456'
       });
 
-      expect(result.content[0].text).toContain('Successfully created playlist: **New Test Playlist**');
+      expect(result.content[0].text).toContain('create operation on playlist "New Test Playlist"');
       expect(result.content[0].text).toContain('Playlist ID: new123');
       expect(result.content[0].text).toContain('Type: audio');
     });
 
     it('should handle smart playlist creation', async () => {
       mockAxios.onGet().reply(200, { MediaContainer: { machineIdentifier: 'test' } });
-      mockAxios.onPost().reply(200, { MediaContainer: { Metadata: [{}] } });
+      mockAxios.onPost().reply(200, { 
+        MediaContainer: { 
+          Metadata: [{ 
+            ratingKey: 'smart456',
+            title: 'Smart Playlist' 
+          }] 
+        } 
+      });
+      // Mock verification endpoints
+      mockAxios.onGet(/\/playlists\/smart456$/).reply(200, {
+        MediaContainer: {
+          Metadata: [{
+            ratingKey: 'smart456',
+            title: 'Smart Playlist',
+            playlistType: 'video'
+          }]
+        }
+      });
+      mockAxios.onGet(/\/playlists\/smart456\/items$/).reply(200, {
+        MediaContainer: { totalSize: 0 }
+      });
 
       const result = await server.handleCreatePlaylist({
         title: 'Smart Playlist',
@@ -260,7 +297,8 @@ describe('Handler Integration Tests', () => {
         smart: true
       });
 
-      expect(result.content[0].text).toContain('Successfully created smart playlist');
+      expect(result.content[0].text).toContain('create operation on playlist "Smart Playlist"');
+      expect(result.content[0].text).toContain('Smart Playlist: Yes');
     });
   });
 
@@ -315,9 +353,9 @@ describe('Handler Integration Tests', () => {
         item_keys: ['item1', 'item2', 'item3']
       });
 
-      expect(result.content[0].text).toContain('Attempted to add: 3 item(s)');
-      expect(result.content[0].text).toContain('Actually added: 3 item(s)');
-      expect(result.content[0].text).toContain('All items added successfully');
+      expect(result.content[0].text).toContain('Attempted: 3 item(s)');
+      expect(result.content[0].text).toContain('Successfully added: 3 item(s)');
+      expect(result.content[0].text).toContain('SUCCESS: add operation');
     });
 
     it('should handle adding duplicate items (successful API call, no count change)', async () => {
@@ -356,10 +394,10 @@ describe('Handler Integration Tests', () => {
         item_keys: ['item1', 'item2'] // These are duplicates
       });
 
-      expect(result.content[0].text).toContain('Attempted to add: 2 item(s)');
-      expect(result.content[0].text).toContain('Actually added: 0 item(s)');
-      expect(result.content[0].text).toContain('API request successful!');
-      expect(result.content[0].text).toContain('duplicates');
+      expect(result.content[0].text).toContain('Attempted: 2 item(s)');
+      expect(result.content[0].text).toContain('Successfully added: 0 item(s)');
+      expect(result.content[0].text).toContain('Skipped duplicates: 2 item(s)');
+      expect(result.content[0].text).toContain('add operation on playlist');
     });
   });
 
@@ -464,13 +502,26 @@ describe('Handler Integration Tests', () => {
 
   describe('handleDeletePlaylist', () => {
     it('should handle playlist deletion', async () => {
+      // Mock initial info request for playlist title
+      mockAxios.onGet(/\/playlists\/pl123$/).replyOnce(200, {
+        MediaContainer: {
+          Metadata: [{
+            ratingKey: 'pl123',
+            title: 'Test Playlist'
+          }]
+        }
+      });
       mockAxios.onDelete().reply(200, {});
+      // Mock verification - playlist should return 404 after deletion
+      mockAxios.onGet(/\/playlists\/pl123$/).reply(404, 'Not Found');
+      mockAxios.onGet(/\/playlists\/pl123\/items$/).reply(404, 'Not Found');
 
       const result = await server.handleDeletePlaylist({
         playlist_id: 'pl123'
       });
 
-      expect(result.content[0].text).toContain('Successfully deleted playlist pl123');
+      expect(result.content[0].text).toContain('delete operation on playlist');
+      expect(result.content[0].text).toContain('deleted successfully');
     });
   });
 

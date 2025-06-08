@@ -48,6 +48,9 @@ describe('Handler Functions Tests', () => {
 
       mock.onGet().reply(200, { MediaContainer: { machineIdentifier: 'test' } });
       mock.onPost().reply(200, mockResponse);
+      // Mock verification endpoints for the unified verification system
+      mock.onGet(/\/playlists\/456$/).reply(200, mockResponse);
+      mock.onGet(/\/playlists\/456\/items$/).reply(200, { MediaContainer: { totalSize: 0 } });
 
       const result = await server.handleCreatePlaylist({ 
         title: 'Smart Test Playlist', 
@@ -55,7 +58,7 @@ describe('Handler Functions Tests', () => {
         smart: true 
       });
 
-      expect(result.content[0].text).toContain('smart playlist');
+      expect(result.content[0].text).toContain('Smart Playlist: Yes');
       expect(result.content[0].text).toContain('Smart Test Playlist');
     });
   });

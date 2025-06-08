@@ -483,6 +483,31 @@ class PlexMCPServer {
           },
           */
           {
+            name: "copy_playlist",
+            description: "Copy an existing playlist (safer alternative to remove operations)",
+            inputSchema: {
+              type: "object",
+              properties: {
+                source_playlist_id: {
+                  type: "string",
+                  description: "The source playlist ID (ratingKey) to copy from",
+                },
+                new_title: {
+                  type: "string",
+                  description: "Title for the new copied playlist",
+                },
+                exclude_item_keys: {
+                  type: "array",
+                  items: {
+                    type: "string"
+                  },
+                  description: "Array of item keys (ratingKey) to exclude from the copy (optional)",
+                },
+              },
+              required: ["source_playlist_id", "new_title"],
+            },
+          },
+          {
             name: "delete_playlist",
             description: "Delete an existing playlist",
             inputSchema: {
@@ -652,6 +677,8 @@ class PlexMCPServer {
         // DISABLED: remove_from_playlist - PROBLEMATIC operation
         // case "remove_from_playlist":
         //   return await this.handleRemoveFromPlaylist(request.params.arguments);
+        case "copy_playlist":
+          return await this.handleCopyPlaylist(request.params.arguments);
         case "delete_playlist":
           return await this.handleDeletePlaylist(request.params.arguments);
         case "get_watched_status":
@@ -670,6 +697,278 @@ class PlexMCPServer {
           throw new Error(`Unknown tool: ${request.params.name}`);
       }
     });
+  }
+
+  // REQ-004: Unified operation verification system for playlist operations
+  // Provides consistent verification and confirmation across all playlist modifications
+  async verifyPlaylistOperation(operationType, playlistId, expectedChanges = {}, options = {}) {
+    const {
+      maxRetries = 3,
+      baseDelay = 200,
+      maxDelay = 1000,
+      timeoutMs = 10000,
+      allowPartialSuccess = true
+    } = options;
+
+    const plexUrl = process.env.PLEX_URL || 'http://localhost:32400';
+    const plexToken = process.env.PLEX_TOKEN;
+    
+    if (!plexToken) {
+      throw new Error('PLEX_TOKEN environment variable is required');
+    }
+
+    const verificationResult = {
+      operationType,
+      playlistId,
+      verified: false,
+      attempts: 0,
+      finalState: null,
+      changes: {
+        expectedItemCount: expectedChanges.expectedItemCount || null,
+        expectedTotalItems: expectedChanges.expectedTotalItems || null,
+        actualItemCount: null,
+        actualTotalItems: null
+      },
+      timings: {
+        startTime: Date.now(),
+        endTime: null,
+        totalDuration: null
+      },
+      errors: []
+    };
+
+    const playlistInfoUrl = `${plexUrl}/playlists/${playlistId}`;
+    const playlistItemsUrl = `${plexUrl}/playlists/${playlistId}/items`;
+
+    let attempt = 0;
+    const startTime = Date.now();
+
+    while (attempt < maxRetries && (Date.now() - startTime) < timeoutMs) {
+      verificationResult.attempts = attempt + 1;
+      
+      // Progressive delay: 200ms, 500ms, 1000ms, etc.
+      if (attempt > 0) {
+        const delay = Math.min(baseDelay * Math.pow(2, attempt - 1), maxDelay);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+
+      try {
+        // Get current playlist metadata and items
+        const [playlistInfo, playlistItems] = await Promise.all([
+          axios.get(playlistInfoUrl, { 
+            params: { 'X-Plex-Token': plexToken },
+            httpsAgent: this.getHttpsAgent()
+          }).catch(err => ({ data: null, error: err })),
+          
+          axios.get(playlistItemsUrl, { 
+            params: { 'X-Plex-Token': plexToken },
+            httpsAgent: this.getHttpsAgent()
+          }).catch(err => ({ data: null, error: err }))
+        ]);
+
+        // Extract playlist state
+        const playlistExists = playlistInfo.data !== null && !playlistInfo.error;
+        const playlistMeta = playlistInfo.data?.MediaContainer?.Metadata?.[0];
+        const itemsContainer = playlistItems.data?.MediaContainer;
+        const currentItemCount = itemsContainer?.totalSize || 0;
+
+        verificationResult.finalState = {
+          exists: playlistExists,
+          title: playlistMeta?.title || `Playlist ${playlistId}`,
+          type: playlistMeta?.playlistType || 'unknown',
+          itemCount: currentItemCount,
+          lastUpdated: playlistMeta?.updatedAt || null
+        };
+
+        verificationResult.changes.actualTotalItems = currentItemCount;
+
+        // Determine if verification is successful based on operation type
+        let verificationPassed = false;
+        
+        switch (operationType) {
+          case 'create':
+            // For create operations, playlist should exist
+            verificationPassed = playlistExists;
+            if (expectedChanges.expectedTotalItems !== null) {
+              verificationPassed = verificationPassed && 
+                (currentItemCount === expectedChanges.expectedTotalItems);
+            }
+            break;
+            
+          case 'add':
+            // For add operations, check if items were actually added
+            if (expectedChanges.expectedTotalItems !== null) {
+              verificationPassed = currentItemCount === expectedChanges.expectedTotalItems;
+            } else if (expectedChanges.expectedItemCount !== null) {
+              // If we only know how many items we tried to add, accept partial success
+              verificationPassed = allowPartialSuccess ? 
+                (currentItemCount >= (expectedChanges.beforeCount || 0)) :
+                (currentItemCount === (expectedChanges.beforeCount || 0) + expectedChanges.expectedItemCount);
+            } else {
+              verificationPassed = playlistExists;
+            }
+            break;
+            
+          case 'copy':
+            // For copy operations, new playlist should exist with expected items
+            verificationPassed = playlistExists;
+            if (expectedChanges.expectedTotalItems !== null) {
+              verificationPassed = verificationPassed && 
+                (currentItemCount === expectedChanges.expectedTotalItems);
+            }
+            break;
+            
+          case 'delete':
+            // For delete operations, playlist should not exist
+            verificationPassed = !playlistExists;
+            break;
+            
+          default:
+            // Generic verification - just check that playlist exists
+            verificationPassed = playlistExists;
+        }
+
+        // If verification passed or we've reached max attempts, finish
+        if (verificationPassed || attempt === maxRetries - 1) {
+          verificationResult.verified = verificationPassed;
+          break;
+        }
+
+        attempt++;
+
+      } catch (error) {
+        verificationResult.errors.push({
+          attempt: attempt + 1,
+          error: error.message,
+          timestamp: Date.now()
+        });
+        
+        // If this is the last attempt, break
+        if (attempt === maxRetries - 1) {
+          break;
+        }
+        
+        attempt++;
+      }
+    }
+
+    verificationResult.timings.endTime = Date.now();
+    verificationResult.timings.totalDuration = verificationResult.timings.endTime - verificationResult.timings.startTime;
+
+    return verificationResult;
+  }
+
+  // REQ-004: Generate standardized confirmation messages for playlist operations
+  generateOperationConfirmation(operationType, verificationResult, additionalData = {}) {
+    const { verified, finalState, changes, attempts, timings, errors } = verificationResult;
+    const { playlistId } = verificationResult;
+    
+    let statusIcon = verified ? '✅' : '❌';
+    let statusText = verified ? 'SUCCESS' : 'FAILURE';
+    
+    // Handle partial success cases
+    if (!verified && changes.actualTotalItems > (additionalData.beforeCount || 0)) {
+      statusIcon = '⚠️';
+      statusText = 'PARTIAL SUCCESS';
+    }
+    
+    let confirmationText = `${statusIcon} ${statusText}: ${operationType} operation on playlist`;
+    
+    // Prefer the original title from additionalData if available, otherwise use verified title
+    const displayTitle = additionalData.title || additionalData.newTitle || 
+                         (finalState?.title && finalState.title !== `Playlist ${playlistId}` ? finalState.title : null);
+    
+    if (displayTitle) {
+      confirmationText += ` "${displayTitle}"`;
+    } else {
+      confirmationText += ` ${playlistId}`;
+    }
+    
+    // Add operation-specific details
+    switch (operationType) {
+      case 'create':
+        if (verified) {
+          confirmationText += ` created successfully`;
+          if (finalState?.itemCount > 0) {
+            confirmationText += ` with ${finalState.itemCount} item(s)`;
+          }
+        } else {
+          confirmationText += ` creation failed`;
+        }
+        break;
+        
+      case 'add':
+        const attempted = additionalData.attempted || 0;
+        const actualAdded = changes.actualTotalItems - (additionalData.beforeCount || 0);
+        const skipped = Math.max(0, (additionalData.successfulAdds || 0) - actualAdded);
+        const failed = Math.max(0, attempted - (additionalData.successfulAdds || 0));
+        
+        confirmationText += `\n• Attempted: ${attempted} item(s)`;
+        confirmationText += `\n• Successfully added: ${Math.max(0, actualAdded)} item(s)`;
+        if (skipped > 0) {
+          confirmationText += `\n• Skipped duplicates: ${skipped} item(s)`;
+        }
+        if (failed > 0) {
+          confirmationText += `\n• Failed: ${failed} item(s)`;
+        }
+        confirmationText += `\n• Final playlist size: ${changes.actualTotalItems} items`;
+        break;
+        
+      case 'copy':
+        const copied = additionalData.addedCount || 0;
+        const total = additionalData.totalItems || 0;
+        const excluded = additionalData.excludedCount || 0;
+        
+        if (verified) {
+          confirmationText += ` copied successfully`;
+          confirmationText += `\n• Items copied: ${copied}/${total}`;
+          if (excluded > 0) {
+            confirmationText += `\n• Items excluded: ${excluded}`;
+          }
+          confirmationText += `\n• New playlist ID: ${playlistId}`;
+        } else {
+          confirmationText += ` copy failed`;
+        }
+        break;
+        
+      case 'delete':
+        if (verified) {
+          confirmationText += ` deleted successfully`;
+        } else {
+          confirmationText += ` deletion failed`;
+        }
+        break;
+    }
+    
+    // Add verification details if multiple attempts were needed
+    if (attempts > 1) {
+      confirmationText += `\n• Verification attempts: ${attempts}`;
+    }
+    
+    if (timings?.totalDuration) {
+      confirmationText += `\n• Operation completed in ${timings.totalDuration}ms`;
+    }
+    
+    // Add error information for failed operations
+    if (!verified && errors.length > 0) {
+      confirmationText += `\n• Last error: ${errors[errors.length - 1].error}`;
+    }
+    
+    // Add structured data for API consumers
+    const structuredData = {
+      operation_type: operationType,
+      playlist_id: playlistId,
+      verified: verified,
+      final_state: finalState,
+      verification_attempts: attempts,
+      duration_ms: timings?.totalDuration,
+      ...additionalData
+    };
+    
+    return {
+      text: confirmationText,
+      structured_data: structuredData
+    };
   }
 
   async handlePlexSearch(args) {
@@ -888,6 +1187,117 @@ class PlexMCPServer {
     }
   }
 
+  createStandardErrorResponse(error, context = '', errorCategory = null) {
+    let errorType = 'GENERAL_ERROR';
+    let errorMessage = error.message;
+    let errorCode = null;
+    let actionableMessage = '';
+
+    // REQ-005: Specific error categories with actionable information
+    if (errorCategory) {
+      switch (errorCategory) {
+        case 'TRACK_NOT_FOUND':
+          errorType = 'TRACK_NOT_FOUND';
+          actionableMessage = 'Verify the track ID exists by searching your library first. Use the ratingKey from search results.';
+          break;
+        case 'DUPLICATE_TRACK':
+          errorType = 'DUPLICATE_TRACK';
+          actionableMessage = 'This track is already in the playlist. Check playlist contents before adding items.';
+          break;
+        case 'PERMISSION_DENIED':
+          errorType = 'PERMISSION_DENIED';
+          actionableMessage = 'Smart playlists and system playlists cannot be modified. Create a new regular playlist instead.';
+          break;
+        case 'PLAYLIST_NOT_FOUND':
+          errorType = 'PLAYLIST_NOT_FOUND';
+          actionableMessage = 'Verify the playlist ID exists by listing playlists first. Use the ratingKey from playlist list.';
+          break;
+        case 'SERVER_ERROR':
+          errorType = 'SERVER_ERROR';
+          actionableMessage = 'Plex server encountered an issue. Try again in a moment or check server logs.';
+          break;
+        case 'INVALID_FORMAT':
+          errorType = 'INVALID_FORMAT';
+          actionableMessage = 'Check parameter format: playlist_id (string), item_keys (array of strings).';
+          break;
+      }
+    } else {
+      // Legacy error categorization for backwards compatibility
+      if (error.response) {
+        errorCode = error.response.status;
+        switch (error.response.status) {
+          case 400:
+            errorType = 'INVALID_FORMAT';
+            actionableMessage = 'Check request parameters and ensure all required fields are provided correctly.';
+            break;
+          case 401:
+          case 403:
+            errorType = 'PERMISSION_DENIED';
+            actionableMessage = 'Check your Plex token is valid and has the required permissions for this server.';
+            break;
+          case 404:
+            errorType = 'PLAYLIST_NOT_FOUND';
+            actionableMessage = 'The requested resource was not found. Verify IDs are correct and the item exists.';
+            break;
+          case 500:
+          case 502:
+          case 503:
+            errorType = 'SERVER_ERROR';
+            actionableMessage = 'Plex server encountered an internal error. Check server status and try again.';
+            errorMessage = `Plex server error (${error.response.status}): ${error.message}`;
+            break;
+        }
+      } else if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND') {
+        errorType = 'SERVER_ERROR';
+        actionableMessage = 'Cannot connect to Plex server. Verify PLEX_URL is correct and server is running.';
+        errorMessage = 'Cannot connect to Plex server';
+      } else if (error.message.includes('environment variable')) {
+        errorType = 'INVALID_FORMAT';
+        actionableMessage = 'Required environment variables are missing. Set PLEX_TOKEN and optionally PLEX_URL.';
+      }
+    }
+
+    const fullMessage = context ? `${context}: ${errorMessage}` : errorMessage;
+    const responseText = actionableMessage ? `${fullMessage}\n\nSolution: ${actionableMessage}` : fullMessage;
+
+    const standardResponse = {
+      success: false,
+      error_type: errorType,
+      error_message: fullMessage,
+      actionable_message: actionableMessage,
+      error_code: errorCode,
+      error_category: errorCategory || 'legacy'
+    };
+
+    return {
+      content: [
+        {
+          type: "text",
+          text: responseText,
+        },
+      ],
+      isError: true,
+      // Include structured error data for debugging
+      _errorDetails: standardResponse
+    };
+  }
+
+  createStandardSuccessResponse(message, additionalData = {}) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: message,
+        },
+      ],
+      // Include structured success data
+      _responseData: {
+        success: true,
+        ...additionalData
+      }
+    };
+  }
+
   async handleBrowseLibraries(args) {
     try {
       const plexUrl = process.env.PLEX_URL || 'http://localhost:32400';
@@ -918,15 +1328,22 @@ class PlexMCPServer {
         ],
       };
     } catch (error) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Error browsing libraries: ${error.message}`,
-          },
-        ],
-        isError: true,
-      };
+      // Categorize error based on response status and content
+      let errorCategory = null;
+      
+      if (error.response) {
+        if (error.response.status === 401 || error.response.status === 403) {
+          errorCategory = 'PERMISSION_DENIED';
+        } else if (error.response.status >= 500) {
+          errorCategory = 'SERVER_ERROR';
+        }
+      } else if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND') {
+        errorCategory = 'SERVER_ERROR';
+      } else if (error.message.includes('environment variable')) {
+        errorCategory = 'INVALID_FORMAT';
+      }
+      
+      return this.createStandardErrorResponse(error, 'Error browsing libraries', errorCategory);
     }
   }
 
@@ -1507,6 +1924,7 @@ class PlexMCPServer {
     }
   }
 
+  // REQ-003: Fixed inconsistent browse functionality with robust retry logic
   async handleBrowsePlaylist(args) {
     const { playlist_id, limit = 50 } = args;
     
@@ -1518,19 +1936,12 @@ class PlexMCPServer {
         throw new Error('PLEX_TOKEN environment variable is required');
       }
 
-      // First get playlist info
-      const playlistUrl = `${plexUrl}/playlists/${playlist_id}`;
-      const response = await axios.get(playlistUrl, { 
-        params: {
-          'X-Plex-Token': plexToken,
-          'X-Plex-Container-Start': 0,
-          'X-Plex-Container-Size': limit || 50
-        },
-        httpsAgent: this.getHttpsAgent()
-      });
+      // REQ-003: Robust playlist browsing with comprehensive fallback strategy
+      const { playlist, items, sourceEndpoint } = await this.getPlaylistWithItems(
+        playlist_id, limit, plexUrl, plexToken
+      );
       
-      const playlistData = response.data.MediaContainer;
-      if (!playlistData || !playlistData.Metadata || playlistData.Metadata.length === 0) {
+      if (!playlist) {
         return {
           content: [
             {
@@ -1540,44 +1951,10 @@ class PlexMCPServer {
           ],
         };
       }
-
-      const playlist = playlistData.Metadata[0];
       
-      // Try to get items from the current response first
-      let items = playlistData.Metadata[0].Metadata || [];
-      
-      // If no items found, try the /items endpoint specifically
-      if (items.length === 0 && playlist.leafCount && playlist.leafCount > 0) {
-        try {
-          const itemsUrl = `${plexUrl}/playlists/${playlist_id}/items`;
-          const itemsResponse = await axios.get(itemsUrl, { 
-            params: {
-              'X-Plex-Token': plexToken,
-              'X-Plex-Container-Start': 0,
-              'X-Plex-Container-Size': limit || 50
-            },
-            httpsAgent: this.getHttpsAgent()
-          });
-          
-          const itemsData = itemsResponse.data.MediaContainer;
-          if (itemsData && itemsData.Metadata) {
-            items = itemsData.Metadata;
-          }
-        } catch (itemsError) {
-          console.error(`Failed to fetch playlist items via /items endpoint: ${itemsError.message}`);
-          return {
-            content: [
-              {
-                type: "text",
-                text: `Error retrieving playlist items: ${itemsError.message}`,
-              },
-            ],
-          };
-        }
-      }
-      
-      // Limit results if specified
-      const limitedItems = limit ? items.slice(0, limit) : items;
+      // REQ-003: Server-side limiting (avoid double limiting)
+      const actualItemCount = items.length;
+      const limitedItems = items; // Items already limited by server request
       
       let resultText = `**${playlist.title}**`;
       if (playlist.smart) {
@@ -1588,14 +1965,24 @@ class PlexMCPServer {
         resultText += `${playlist.summary}\n`;
       }
       resultText += `Duration: ${this.formatDuration(playlist.duration || 0)}\n`;
-      resultText += `Items: ${items.length}`;
-      if (limit && items.length > limit) {
+      
+      // REQ-003: Accurate count reporting
+      const declaredCount = playlist.leafCount || 0;
+      resultText += `Items: ${actualItemCount}`;
+      if (declaredCount !== actualItemCount && declaredCount > 0) {
+        resultText += ` (server reports ${declaredCount})`;
+      }
+      if (limit && actualItemCount >= limit) {
         resultText += ` (showing first ${limit})`;
       }
-      resultText += `\n\n`;
+      resultText += `\n`;
+      resultText += `Source: ${sourceEndpoint}\n\n`;
 
       if (limitedItems.length === 0) {
-        resultText += `This playlist appears to be empty or items could not be retrieved.`;
+        const troubleshootingInfo = declaredCount > 0 
+          ? ` Expected ${declaredCount} items but none were retrieved.`
+          : '';
+        resultText += `This playlist appears to be empty.${troubleshootingInfo}`;
       } else {
         resultText += limitedItems.map((item, index) => {
           let itemText = `${index + 1}. **${item.title}**`;
@@ -1644,6 +2031,93 @@ class PlexMCPServer {
         isError: true,
       };
     }
+  }
+
+  // REQ-003: Robust playlist item retrieval with comprehensive fallback strategy
+  async getPlaylistWithItems(playlist_id, limit, plexUrl, plexToken) {
+    let playlist = null;
+    let items = [];
+    let sourceEndpoint = '';
+    const maxRetries = 3;
+    
+    // Strategy 1: Try primary playlist endpoint with embedded items
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const timestamp = Date.now(); // Cache busting
+        const playlistUrl = `${plexUrl}/playlists/${playlist_id}`;
+        const response = await axios.get(playlistUrl, { 
+          params: {
+            'X-Plex-Token': plexToken,
+            'X-Plex-Container-Start': 0,
+            'X-Plex-Container-Size': limit || 50,
+            '_t': timestamp
+          },
+          httpsAgent: this.getHttpsAgent(),
+          timeout: 10000
+        });
+        
+        const playlistData = response.data.MediaContainer;
+        if (playlistData?.Metadata?.[0]) {
+          playlist = playlistData.Metadata[0];
+          items = playlist.Metadata || [];
+          
+          if (items.length > 0 || !playlist.leafCount || playlist.leafCount === 0) {
+            sourceEndpoint = `primary endpoint (${items.length} items, attempt ${attempt})`;
+            return { playlist, items, sourceEndpoint };
+          }
+        }
+        
+        // Delay before retry
+        if (attempt < maxRetries) {
+          await new Promise(resolve => setTimeout(resolve, 200 * attempt));
+        }
+      } catch (error) {
+        console.warn(`Primary endpoint attempt ${attempt} failed: ${error.message}`);
+        if (attempt === maxRetries) {
+          throw error;
+        }
+      }
+    }
+    
+    // Strategy 2: Dedicated items endpoint (if playlist has leafCount > 0)
+    if (playlist && playlist.leafCount > 0) {
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          const timestamp = Date.now();
+          const itemsUrl = `${plexUrl}/playlists/${playlist_id}/items`;
+          const itemsResponse = await axios.get(itemsUrl, { 
+            params: {
+              'X-Plex-Token': plexToken,
+              'X-Plex-Container-Start': 0,
+              'X-Plex-Container-Size': limit || 50,
+              '_t': timestamp
+            },
+            httpsAgent: this.getHttpsAgent(),
+            timeout: 10000
+          });
+          
+          const itemsData = itemsResponse.data.MediaContainer;
+          if (itemsData?.Metadata) {
+            items = itemsData.Metadata;
+            sourceEndpoint = `dedicated items endpoint (${items.length} items, attempt ${attempt})`;
+            return { playlist, items, sourceEndpoint };
+          }
+        } catch (error) {
+          console.warn(`Items endpoint attempt ${attempt} failed: ${error.message}`);
+          if (attempt < maxRetries) {
+            await new Promise(resolve => setTimeout(resolve, 200 * attempt));
+          }
+        }
+      }
+    }
+    
+    // Strategy 3: Return playlist info even if items couldn't be retrieved
+    if (playlist) {
+      sourceEndpoint = `playlist metadata only (items unavailable)`;
+      return { playlist, items: [], sourceEndpoint };
+    }
+    
+    return { playlist: null, items: [], sourceEndpoint: 'all endpoints failed' };
   }
 
   getMediaTypeFromItem(item) {
@@ -1712,20 +2186,14 @@ class PlexMCPServer {
     }).join('\n\n');
   }
 
+  // REQ-002: Unified playlist creation backend using robust add_to_playlist logic
   async handleCreatePlaylist(args) {
     const { title, type, smart = false, item_key = null } = args;
     
     // Validate that item_key is provided for non-smart playlists
     if (!smart && !item_key) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Error: Non-smart playlists require an initial item. Please provide an item_key parameter with the Plex item key to add to the playlist. You can get item keys by searching or browsing your library first.`,
-          },
-        ],
-        isError: true,
-      };
+      const error = new Error('Non-smart playlists require an initial item. Please provide an item_key parameter with the Plex item key to add to the playlist.');
+      return this.createStandardErrorResponse(error, 'Error creating playlist', 'INVALID_FORMAT');
     }
     
     try {
@@ -1733,62 +2201,68 @@ class PlexMCPServer {
       const plexToken = process.env.PLEX_TOKEN;
       
       if (!plexToken) {
-        throw new Error('PLEX_TOKEN environment variable is required');
+        const error = new Error('PLEX_TOKEN environment variable is required');
+        return this.createStandardErrorResponse(error, 'Error creating playlist', 'INVALID_FORMAT');
       }
 
-      // First get server info to get machine identifier
-      const serverResponse = await axios.get(`${plexUrl}/`, {
-        headers: { 'X-Plex-Token': plexToken },
-        httpsAgent: this.getHttpsAgent()
+      // REQ-002: Use two-step approach for better compatibility
+      // Step 1: Create minimal empty playlist
+      const createdPlaylist = await this.createEmptyPlaylist(title, type, smart, plexUrl, plexToken);
+      
+      // Step 2: Add initial item using robust add_to_playlist logic (if not smart playlist)
+      if (!smart && item_key) {
+        const addResult = await this.handleAddToPlaylist({
+          playlist_id: createdPlaylist.ratingKey,
+          item_keys: [item_key]
+        });
+        
+        // REQ-004: Use unified verification system for final confirmation
+        const finalVerification = await this.verifyPlaylistOperation('create', createdPlaylist.ratingKey, {
+          expectedTotalItems: 1
+        });
+        
+        const confirmationData = this.generateOperationConfirmation('create', finalVerification, {
+          addResult: addResult.content[0].text,
+          title: title,
+          type: type,
+          playlistId: createdPlaylist.ratingKey
+        });
+        
+        let resultText = confirmationData.text;
+        resultText += `\n   **Playlist ID: ${createdPlaylist.ratingKey}** (use this ID for future operations)`;
+        resultText += `\n   Type: ${type}`;
+        
+        if (!finalVerification.verified) {
+          resultText += `\n\n⚠️ Playlist created but verification failed:\n${addResult.content[0].text}`;
+        }
+        
+        return {
+          content: [
+            {
+              type: "text",
+              text: resultText,
+            },
+          ],
+        };
+      }
+      
+      // Smart playlist or no initial item
+      // REQ-004: Use unified verification system for smart playlists too
+      const smartVerification = await this.verifyPlaylistOperation('create', createdPlaylist.ratingKey, {
+        expectedTotalItems: 0  // Smart playlists typically start empty
       });
-
-      const machineIdentifier = serverResponse.data?.MediaContainer?.machineIdentifier;
-      if (!machineIdentifier) {
-        throw new Error('Could not get server machine identifier');
-      }
-
-      const params = new URLSearchParams({
+      
+      const smartConfirmationData = this.generateOperationConfirmation('create', smartVerification, {
         title: title,
         type: type,
-        smart: smart ? '1' : '0'
-      });
-
-      // Add URI if item_key is provided
-      if (item_key) {
-        const uri = `server://${machineIdentifier}/com.plexapp.plugins.library/library/metadata/${item_key}`;
-        params.append('uri', uri);
-      }
-
-      // Add required Plex headers as query parameters
-      params.append('X-Plex-Token', plexToken);
-      params.append('X-Plex-Product', 'Plex MCP');
-      params.append('X-Plex-Version', '1.0.0');
-      params.append('X-Plex-Client-Identifier', 'plex-mcp-client');
-      params.append('X-Plex-Platform', 'Node.js');
-
-      const createUrl = `${plexUrl}/playlists?${params.toString()}`;
-
-      const response = await axios.post(createUrl, null, { 
-        headers: {
-          'Content-Length': '0'
-        },
-        httpsAgent: this.getHttpsAgent()
+        smart: smart,
+        playlistId: createdPlaylist.ratingKey
       });
       
-      // Get the created playlist info from the response
-      const playlistData = response.data?.MediaContainer?.Metadata?.[0];
-      
-      let resultText = `✅ Successfully created ${smart ? 'smart ' : ''}playlist: **${title}**`;
-      if (playlistData) {
-        resultText += `\n   **Playlist ID: ${playlistData.ratingKey}** (use this ID for future operations)`;
-        resultText += `\n   Type: ${type}`;
-        if (smart) resultText += `\n   Smart Playlist: Yes`;
-        if (item_key && !smart) {
-          resultText += `\n   Initial item added: ${item_key}`;
-        }
-      } else {
-        resultText += `\n   ⚠️ Playlist created but details not available - check your playlists`;
-      }
+      let resultText = smartConfirmationData.text;
+      resultText += `\n   **Playlist ID: ${createdPlaylist.ratingKey}** (use this ID for future operations)`;
+      resultText += `\n   Type: ${type}`;
+      if (smart) resultText += `\n   Smart Playlist: Yes`;
       
       return {
         content: [
@@ -1798,43 +2272,76 @@ class PlexMCPServer {
           },
         ],
       };
-    } catch (error) {
-      let errorMessage = `Error creating playlist: ${error.message}`;
       
-      // Check if it's a 400 Bad Request error
-      if (error.response && error.response.status === 400) {
-        errorMessage = `Playlist creation failed with 400 Bad Request. This may indicate that:
-1. The Plex server doesn't support playlist creation via API
-2. Additional parameters are required that aren't documented  
-3. Playlists may need to be created through the Plex web interface
-
-You can try creating the playlist manually in Plex and then use other MCP tools to manage it.`;
+    } catch (error) {
+      // Categorize error based on response status and content
+      let errorCategory = null;
+      
+      if (error.response) {
+        if (error.response.status === 400) {
+          errorCategory = 'INVALID_FORMAT';
+        } else if (error.response.status === 403) {
+          errorCategory = 'PERMISSION_DENIED';
+        } else if (error.response.status >= 500) {
+          errorCategory = 'SERVER_ERROR';
+        }
+      } else if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND') {
+        errorCategory = 'SERVER_ERROR';
+      } else if (error.message.includes('item_key')) {
+        errorCategory = 'TRACK_NOT_FOUND';
       }
       
-      return {
-        content: [
-          {
-            type: "text",
-            text: errorMessage,
-          },
-        ],
-        isError: true,
-      };
+      return this.createStandardErrorResponse(error, 'Error creating playlist', errorCategory);
     }
+  }
+
+  // REQ-002: Helper method for creating minimal empty playlist
+  async createEmptyPlaylist(title, type, smart, plexUrl, plexToken) {
+    const params = new URLSearchParams({
+      title: title,
+      type: type,
+      smart: smart ? '1' : '0'
+    });
+
+    // Add required Plex headers as query parameters for compatibility
+    params.append('X-Plex-Token', plexToken);
+    params.append('X-Plex-Product', 'Plex MCP');
+    params.append('X-Plex-Version', '1.0.0');
+    params.append('X-Plex-Client-Identifier', 'plex-mcp-client');
+    params.append('X-Plex-Platform', 'Node.js');
+
+    const createUrl = `${plexUrl}/playlists?${params.toString()}`;
+
+    const response = await axios.post(createUrl, null, { 
+      headers: {
+        'Content-Length': '0'
+      },
+      httpsAgent: this.getHttpsAgent()
+    });
+    
+    const playlistData = response.data?.MediaContainer?.Metadata?.[0];
+    if (!playlistData || !playlistData.ratingKey) {
+      throw new Error('Playlist created but ID not available in response');
+    }
+    
+    return playlistData;
   }
 
   async handleAddToPlaylist(args) {
     const { playlist_id, item_keys } = args;
     
-    // Input validation
+    // Input validation with specific error categories
     if (!playlist_id || typeof playlist_id !== 'string') {
-      throw new Error('Valid playlist_id is required');
+      const error = new Error('Valid playlist_id is required');
+      return this.createStandardErrorResponse(error, 'Error adding items to playlist', 'INVALID_FORMAT');
     }
     if (!item_keys || !Array.isArray(item_keys) || item_keys.length === 0) {
-      throw new Error('item_keys must be a non-empty array');
+      const error = new Error('item_keys must be a non-empty array');
+      return this.createStandardErrorResponse(error, 'Error adding items to playlist', 'INVALID_FORMAT');
     }
     if (item_keys.some(key => !key || typeof key !== 'string')) {
-      throw new Error('All item_keys must be non-empty strings');
+      const error = new Error('All item_keys must be non-empty strings');
+      return this.createStandardErrorResponse(error, 'Error adding items to playlist', 'INVALID_FORMAT');
     }
     
     try {
@@ -1842,20 +2349,30 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
       const plexToken = process.env.PLEX_TOKEN;
       
       if (!plexToken) {
-        throw new Error('PLEX_TOKEN environment variable is required');
+        const error = new Error('PLEX_TOKEN environment variable is required');
+        return this.createStandardErrorResponse(error, 'Error adding items to playlist', 'INVALID_FORMAT');
       }
 
       // Get playlist info before adding items
       const playlistInfoUrl = `${plexUrl}/playlists/${playlist_id}`;
       const playlistItemsUrl = `${plexUrl}/playlists/${playlist_id}/items`;
       
-      // Get playlist metadata (title, etc.)
-      const playlistInfoResponse = await axios.get(playlistInfoUrl, { 
-        params: {
-          'X-Plex-Token': plexToken
-        },
-        httpsAgent: this.getHttpsAgent()
-      });
+      // Get playlist metadata (title, etc.) with specific error handling
+      let playlistInfoResponse;
+      try {
+        playlistInfoResponse = await axios.get(playlistInfoUrl, { 
+          params: {
+            'X-Plex-Token': plexToken
+          },
+          httpsAgent: this.getHttpsAgent()
+        });
+      } catch (error) {
+        if (error.response && error.response.status === 404) {
+          return this.createStandardErrorResponse(error, 'Error adding items to playlist', 'PLAYLIST_NOT_FOUND');
+        }
+        // For other errors, let it fall through to general error handling
+        throw error;
+      }
       
       const playlistInfo = playlistInfoResponse.data.MediaContainer;
       const playlistTitle = playlistInfo.Metadata && playlistInfo.Metadata[0] 
@@ -1884,99 +2401,102 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
       
       const machineIdentifier = serverResponse.data?.MediaContainer?.machineIdentifier;
       if (!machineIdentifier) {
-        throw new Error('Could not get server machine identifier');
+        const error = new Error('Could not get server machine identifier');
+        return this.createStandardErrorResponse(error, 'Error adding items to playlist', 'SERVER_ERROR');
       }
 
+      // Use sequential single-item operations for better reliability
       const addUrl = `${plexUrl}/playlists/${playlist_id}/items`;
-      const params = {
-        'X-Plex-Token': plexToken,
-        uri: item_keys.map(key => `server://${machineIdentifier}/com.plexapp.plugins.library/library/metadata/${key}`).join(',')
-      };
+      let successfulAdds = 0;
+      let failedAdds = [];
+      
+      for (const item_key of item_keys) {
+        try {
+          const params = {
+            'X-Plex-Token': plexToken,
+            uri: `server://${machineIdentifier}/com.plexapp.plugins.library/library/metadata/${item_key}`
+          };
 
-      const response = await axios.put(addUrl, null, { 
-        params,
-        httpsAgent: this.getHttpsAgent()
+          const response = await axios.put(addUrl, null, { 
+            params,
+            httpsAgent: this.getHttpsAgent()
+          });
+          
+          if (response.status >= 200 && response.status < 300) {
+            successfulAdds++;
+          } else {
+            failedAdds.push(item_key);
+          }
+          
+          // Small delay between requests to avoid overwhelming the server
+          if (item_keys.length > 1) {
+            await new Promise(resolve => setTimeout(resolve, 50));
+          }
+        } catch (error) {
+          failedAdds.push(item_key);
+          console.warn(`Failed to add item ${item_key}: ${error.message}`);
+        }
+      }
+      
+      const putSuccessful = successfulAdds > 0;
+      
+      // REQ-004: Use unified verification system
+      const expectedAfterCount = beforeCount + successfulAdds;
+      const verificationResult = await this.verifyPlaylistOperation('add', playlist_id, {
+        expectedTotalItems: expectedAfterCount,
+        expectedItemCount: successfulAdds,
+        beforeCount: beforeCount
       });
-      
-      // Check if the PUT request was successful based on HTTP status
-      const putSuccessful = response.status >= 200 && response.status < 300;
-      
-      // Small delay to allow Plex server to update
-      await new Promise(resolve => setTimeout(resolve, 100));
-      
-      // Verify the addition by checking the playlist items again
-      let afterCount = 0;
-      try {
-        const afterResponse = await axios.get(playlistItemsUrl, { 
-          params: {
-            'X-Plex-Token': plexToken
-          },
-          httpsAgent: this.getHttpsAgent()
-        });
-        afterCount = afterResponse.data.MediaContainer?.totalSize || 0;
-      } catch (error) {
-        // If items endpoint fails, playlist might be empty
-        afterCount = 0;
-      }
-      
-      const actualAdded = afterCount - beforeCount;
+
+      const actualAdded = verificationResult.changes.actualTotalItems - beforeCount;
       const attempted = item_keys.length;
+      const skippedDuplicates = Math.max(0, successfulAdds - actualAdded);
       
-      let resultText = `Playlist "${playlistTitle}" update:\n`;
-      resultText += `• Attempted to add: ${attempted} item(s)\n`;
-      resultText += `• Actually added: ${actualAdded} item(s)\n`;
-      resultText += `• Playlist size: ${beforeCount} → ${afterCount} items\n`;
-      
-      // If HTTP request was successful but count didn't change, 
-      // it's likely the items already exist or are duplicates
-      if (actualAdded === attempted) {
-        resultText += `✅ All items added successfully!`;
-      } else if (actualAdded > 0) {
-        resultText += `⚠️ Partial success: ${attempted - actualAdded} item(s) may have been duplicates or invalid`;
-      } else if (putSuccessful) {
-        resultText += `✅ API request successful! Items may already exist in playlist or were duplicates.\n`;
-        resultText += `ℹ️ This is normal behavior - Plex doesn't add duplicate items.`;
-      } else {
-        resultText += `❌ No items were added. This may indicate:\n`;
-        resultText += `  - Invalid item IDs (use ratingKey from search results)\n`;
-        resultText += `  - Items already exist in playlist\n`;
-        resultText += `  - Permission issues`;
-      }
+      // REQ-004: Generate standardized confirmation using unified system
+      const confirmationData = this.generateOperationConfirmation('add', verificationResult, {
+        attempted,
+        successfulAdds,
+        beforeCount,
+        failedAdds
+      });
+
+      // REQ-001: Return structured response data for API consumers
+      const responseData = {
+        attempted,
+        successfully_added: actualAdded,
+        skipped_duplicates: skippedDuplicates,
+        failed: failedAdds.length,
+        new_playlist_size: verificationResult.changes.actualTotalItems,
+        verification_attempts: verificationResult.attempts,
+        verified: verificationResult.verified,
+        ...confirmationData.structured_data
+      };
       
       return {
         content: [
           {
             type: "text",
-            text: resultText,
+            text: confirmationData.text + `\n\nOperation Summary: ${JSON.stringify(responseData, null, 2)}`,
           },
         ],
       };
     } catch (error) {
-      // Enhanced error handling with specific error types
-      let errorMessage = `Error adding items to playlist: ${error.message}`;
+      // Categorize error based on response status and content
+      let errorCategory = null;
       
       if (error.response) {
-        const status = error.response.status;
-        if (status === 404) {
-          errorMessage = `Playlist with ID ${playlist_id} not found`;
-        } else if (status === 401 || status === 403) {
-          errorMessage = `Permission denied: Check your Plex token and server access`;
-        } else if (status >= 500) {
-          errorMessage = `Plex server error (${status}): ${error.message}`;
+        if (error.response.status === 404) {
+          errorCategory = 'PLAYLIST_NOT_FOUND';
+        } else if (error.response.status === 403) {
+          errorCategory = 'PERMISSION_DENIED';
+        } else if (error.response.status >= 500) {
+          errorCategory = 'SERVER_ERROR';
         }
       } else if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND') {
-        errorMessage = `Cannot connect to Plex server: Check PLEX_URL configuration`;
+        errorCategory = 'SERVER_ERROR';
       }
       
-      return {
-        content: [
-          {
-            type: "text",
-            text: errorMessage,
-          },
-        ],
-        isError: true,
-      };
+      return this.createStandardErrorResponse(error, 'Error adding items to playlist', errorCategory);
     }
   }
 
@@ -2179,15 +2699,173 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
     }
   }
 
-  async handleDeletePlaylist(args) {
-    const { playlist_id } = args;
+  async handleCopyPlaylist(args) {
+    const { source_playlist_id, new_title, exclude_item_keys = [] } = args;
+    
+    // Input validation with specific error categories
+    if (!source_playlist_id || typeof source_playlist_id !== 'string') {
+      const error = new Error('Valid source_playlist_id is required');
+      return this.createStandardErrorResponse(error, 'Error copying playlist', 'INVALID_FORMAT');
+    }
+    if (!new_title || typeof new_title !== 'string') {
+      const error = new Error('Valid new_title is required');
+      return this.createStandardErrorResponse(error, 'Error copying playlist', 'INVALID_FORMAT');
+    }
     
     try {
       const plexUrl = process.env.PLEX_URL || 'http://localhost:32400';
       const plexToken = process.env.PLEX_TOKEN;
       
       if (!plexToken) {
-        throw new Error('PLEX_TOKEN environment variable is required');
+        const error = new Error('PLEX_TOKEN environment variable is required');
+        return this.createStandardErrorResponse(error, 'Error copying playlist', 'INVALID_FORMAT');
+      }
+
+      // First, get the source playlist details
+      const playlistResponse = await axios.get(`${plexUrl}/playlists/${source_playlist_id}`, {
+        params: { 'X-Plex-Token': plexToken },
+        httpsAgent: this.getHttpsAgent()
+      });
+
+      const sourcePlaylist = playlistResponse.data?.MediaContainer?.Metadata?.[0];
+      if (!sourcePlaylist) {
+        const error = new Error(`Source playlist ${source_playlist_id} not found`);
+        return this.createStandardErrorResponse(error, 'Error copying playlist', 'PLAYLIST_NOT_FOUND');
+      }
+
+      // Get playlist items
+      const itemsResponse = await axios.get(`${plexUrl}/playlists/${source_playlist_id}/items`, {
+        params: { 'X-Plex-Token': plexToken },
+        httpsAgent: this.getHttpsAgent()
+      });
+
+      const allItems = itemsResponse.data?.MediaContainer?.Metadata || [];
+      
+      // Filter out excluded items
+      const itemsToInclude = allItems.filter(item => 
+        !exclude_item_keys.includes(item.ratingKey)
+      );
+
+      if (itemsToInclude.length === 0) {
+        const error = new Error('No items to include in copied playlist after exclusions');
+        return this.createStandardErrorResponse(error, 'Error copying playlist', 'INVALID_FORMAT');
+      }
+
+      // Create new playlist with first item
+      const createResult = await this.handleCreatePlaylist({
+        title: new_title,
+        type: sourcePlaylist.playlistType,
+        smart: false,
+        item_key: itemsToInclude[0].ratingKey
+      });
+
+      // Extract playlist ID from create result
+      const createText = createResult.content[0].text;
+      const playlistIdMatch = createText.match(/Playlist ID: (\d+)/);
+      
+      if (!playlistIdMatch) {
+        const error = new Error('Failed to get new playlist ID from creation result');
+        return this.createStandardErrorResponse(error, 'Error copying playlist', 'SERVER_ERROR');
+      }
+      
+      const newPlaylistId = playlistIdMatch[1];
+
+      // Add remaining items sequentially (safer than batch)
+      const remainingItems = itemsToInclude.slice(1);
+      let addedCount = 1; // First item already added during creation
+      
+      for (const item of remainingItems) {
+        try {
+          await this.handleAddToPlaylist({
+            playlist_id: newPlaylistId,
+            item_keys: [item.ratingKey]
+          });
+          addedCount++;
+        } catch (error) {
+          console.warn(`Failed to add item ${item.ratingKey} to copied playlist: ${error.message}`);
+        }
+      }
+
+      // REQ-004: Use unified verification system for final copy confirmation
+      const copyVerification = await this.verifyPlaylistOperation('copy', newPlaylistId, {
+        expectedTotalItems: itemsToInclude.length
+      });
+
+      const excludedCount = allItems.length - itemsToInclude.length;
+      const confirmationData = this.generateOperationConfirmation('copy', copyVerification, {
+        addedCount,
+        totalItems: itemsToInclude.length,
+        excludedCount,
+        sourceTitle: sourcePlaylist.title,
+        newTitle: new_title
+      });
+
+      let resultText = confirmationData.text;
+      resultText += `\n   Source: ${sourcePlaylist.title}`;
+      if (addedCount < itemsToInclude.length) {
+        resultText += `\n   ⚠️ Some items failed to copy - verification shows ${copyVerification.finalState?.itemCount || 0} items`;
+      }
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: resultText,
+          },
+        ],
+      };
+
+    } catch (error) {
+      // Categorize error based on response status and content
+      let errorCategory = null;
+      
+      if (error.response) {
+        if (error.response.status === 404) {
+          errorCategory = 'PLAYLIST_NOT_FOUND';
+        } else if (error.response.status === 403) {
+          errorCategory = 'PERMISSION_DENIED';
+        } else if (error.response.status >= 500) {
+          errorCategory = 'SERVER_ERROR';
+        }
+      } else if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND') {
+        errorCategory = 'SERVER_ERROR';
+      }
+      
+      return this.createStandardErrorResponse(error, 'Error copying playlist', errorCategory);
+    }
+  }
+
+  async handleDeletePlaylist(args) {
+    const { playlist_id } = args;
+    
+    // Input validation with specific error categories
+    if (!playlist_id || typeof playlist_id !== 'string') {
+      const error = new Error('Valid playlist_id is required');
+      return this.createStandardErrorResponse(error, 'Error deleting playlist', 'INVALID_FORMAT');
+    }
+    
+    try {
+      const plexUrl = process.env.PLEX_URL || 'http://localhost:32400';
+      const plexToken = process.env.PLEX_TOKEN;
+      
+      if (!plexToken) {
+        const error = new Error('PLEX_TOKEN environment variable is required');
+        return this.createStandardErrorResponse(error, 'Error deleting playlist', 'INVALID_FORMAT');
+      }
+
+      // Get playlist title before deletion for better feedback
+      let playlistTitle = `Playlist ${playlist_id}`;
+      try {
+        const playlistInfoResponse = await axios.get(`${plexUrl}/playlists/${playlist_id}`, {
+          params: { 'X-Plex-Token': plexToken },
+          httpsAgent: this.getHttpsAgent()
+        });
+        const playlistInfo = playlistInfoResponse.data?.MediaContainer?.Metadata?.[0];
+        if (playlistInfo && playlistInfo.title) {
+          playlistTitle = playlistInfo.title;
+        }
+      } catch (error) {
+        // If we can't get the title, proceed with deletion anyway
       }
 
       const deleteUrl = `${plexUrl}/playlists/${playlist_id}`;
@@ -2200,26 +2878,39 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
         httpsAgent: this.getHttpsAgent()
       });
       
-      const resultText = `Successfully deleted playlist ${playlist_id}`;
+      // REQ-004: Use unified verification system for deletion
+      const deleteVerification = await this.verifyPlaylistOperation('delete', playlist_id, {}, {
+        maxRetries: 2, // Faster verification for deletion
+        baseDelay: 100
+      });
       
-      return {
-        content: [
-          {
-            type: "text",
-            text: resultText,
-          },
-        ],
-      };
+      const confirmationData = this.generateOperationConfirmation('delete', deleteVerification, {
+        playlistTitle: playlistTitle
+      });
+      
+      return this.createStandardSuccessResponse(confirmationData.text, {
+        playlist_id,
+        playlist_title: playlistTitle,
+        deletion_verified: deleteVerification.verified,
+        ...confirmationData.structured_data
+      });
     } catch (error) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Error deleting playlist: ${error.message}`,
-          },
-        ],
-        isError: true,
-      };
+      // Categorize error based on response status and content
+      let errorCategory = null;
+      
+      if (error.response) {
+        if (error.response.status === 404) {
+          errorCategory = 'PLAYLIST_NOT_FOUND';
+        } else if (error.response.status === 403) {
+          errorCategory = 'PERMISSION_DENIED';
+        } else if (error.response.status >= 500) {
+          errorCategory = 'SERVER_ERROR';
+        }
+      } else if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND') {
+        errorCategory = 'SERVER_ERROR';
+      }
+      
+      return this.createStandardErrorResponse(error, 'Error deleting playlist', errorCategory);
     }
   }
 

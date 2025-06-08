@@ -58,8 +58,8 @@ describe('Error Handling Tests', () => {
       const result = await server.handleCreatePlaylist({ title: 'Test', type: 'video', item_key: '123' });
       
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain('400 Bad Request');
-      expect(result.content[0].text).toContain('Plex server doesn\'t support playlist creation');
+      expect(result.content[0].text).toContain('Error creating playlist');
+      expect(result.content[0].text).toContain('400');
     });
 
     it('should handle generic errors in playlist creation', async () => {
@@ -93,12 +93,15 @@ describe('Error Handling Tests', () => {
 
   describe('Playlist Error Handling', () => {
     it('should handle errors in handleAddToPlaylist', async () => {
+      // Mock the initial GET requests that are made before the PUT
+      mock.onGet(/\/playlists\/123$/).reply(404, 'Not Found');
+      mock.onGet(/\/playlists\/123\/items$/).reply(404, 'Not Found');
       mock.onPut().reply(500, 'Server Error');
       
       const result = await server.handleAddToPlaylist({ playlist_id: '123', item_keys: ['456'] });
       
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain('Playlist with ID 123 not found');
+      expect(result.content[0].text).toContain('Error adding items to playlist');
     });
 
     it('should handle errors in handleRemoveFromPlaylist', async () => {

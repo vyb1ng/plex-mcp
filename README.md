@@ -132,3 +132,77 @@ Search for content in your Plex libraries.
   "limit": 5
 }
 ```
+
+## Plex API Limitations and Workarounds
+
+This server implements several workarounds for known Plex API limitations:
+
+### ⚠️ Playlist Remove Operations (DISABLED)
+
+**Issue:** The `remove_from_playlist` function is **disabled** due to destructive Plex API behavior.
+
+**Problem:** When removing items from playlists, the Plex API removes **ALL instances** of matching items, not just one instance. This can accidentally delete entire playlists.
+
+**Workaround:** Use the `copy_playlist` function with `exclude_item_keys` parameter to create a new playlist without unwanted items, then delete the original if needed.
+
+```json
+{
+  "source_playlist_id": "12345",
+  "new_title": "My Playlist (Cleaned)",
+  "exclude_item_keys": ["67890", "11111"]
+}
+```
+
+### 🔄 Batch Item Operations
+
+**Issue:** Adding multiple items to playlists in a single batch operation can be unreliable.
+
+**Solution:** The `add_to_playlist` function now uses **sequential single-item operations** instead of batch operations for better reliability.
+
+**Benefits:**
+- Higher success rate for multiple item additions
+- Individual error tracking per item
+- Graceful handling of partial failures
+
+### 📊 Response Verification
+
+**Enhancement:** All playlist operations now verify their results by checking the actual playlist state after API calls.
+
+**Features:**
+- Before/after item counts for additions
+- Deletion verification by attempting to access deleted playlists
+- Clear success/failure reporting with detailed feedback
+
+### 🏷️ Playlist Creation Requirements
+
+**Limitation:** Non-smart playlists require an initial item to be created successfully.
+
+**Workaround:** Always provide an `item_key` parameter when creating regular playlists. Smart playlists don't have this requirement.
+
+**Example:**
+```json
+{
+  "title": "My New Playlist",
+  "type": "audio",
+  "smart": false,
+  "item_key": "12345"
+}
+```
+
+### 🔧 Error Handling
+
+The server implements standardized error responses categorizing common issues:
+
+- **Authentication errors**: Check Plex token and permissions
+- **Connection errors**: Verify PLEX_URL configuration  
+- **Not found errors**: Invalid playlist/item IDs
+- **Server errors**: Plex server-side issues
+- **Configuration errors**: Missing environment variables
+
+### 💡 Best Practices
+
+1. **Use sequential operations** for reliability over speed
+2. **Copy playlists instead of removing items** to avoid data loss
+3. **Always verify results** by checking playlist state after operations
+4. **Handle partial failures gracefully** when working with multiple items
+5. **Use item keys from search results** for playlist operations
