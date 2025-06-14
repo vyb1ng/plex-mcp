@@ -42,7 +42,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",
     "axios": "^1.9.0",
-    "plex-oauth": "^2.1.0"
+    "plex-oauth": "^1.2.2"
   },
   "devDependencies": {
     "@types/jest": "^29.5.14",
