@@ -48,5 +48,10 @@
     "@types/jest": "^29.5.14",
     "axios-mock-adapter": "^2.1.0",
     "jest": "^30.0.0"
+  },
+  "overrides": {
+    "plex-oauth": {
+      "axios": "^1.10.0"
+    }
   }
 }
