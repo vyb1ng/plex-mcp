@@ -69,7 +69,7 @@ describe('Handler Integration Tests', () => {
       });
 
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain('PLEX_TOKEN environment variable is required');
+      expect(result.content[0].text).toContain('No authentication token available');
 
       process.env.PLEX_TOKEN = originalToken;
     });

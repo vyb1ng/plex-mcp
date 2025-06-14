@@ -28,7 +28,7 @@ describe('Error Handling Tests', () => {
       const result = await server.handlePlexSearch({ query: 'test' });
       
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain('PLEX_TOKEN environment variable is required');
+      expect(result.content[0].text).toContain('No authentication token available');
     });
 
     it('should handle missing PLEX_TOKEN in handleCreatePlaylist', async () => {
@@ -37,7 +37,7 @@ describe('Error Handling Tests', () => {
       const result = await server.handleCreatePlaylist({ title: 'Test', type: 'video', item_key: '123' });
       
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain('PLEX_TOKEN environment variable is required');
+      expect(result.content[0].text).toContain('No authentication token available');
     });
 
     it('should handle missing PLEX_TOKEN in handleBrowseLibraries', async () => {
@@ -46,7 +46,7 @@ describe('Error Handling Tests', () => {
       const result = await server.handleBrowseLibraries({});
       
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain('PLEX_TOKEN environment variable is required');
+      expect(result.content[0].text).toContain('No authentication token available');
     });
   });
 

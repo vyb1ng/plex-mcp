@@ -7,6 +7,84 @@ const {
   ListToolsRequestSchema,
 } = require("@modelcontextprotocol/sdk/types.js");
 const axios = require('axios');
+const { PlexOauth } = require('plex-oauth');
+
+class PlexAuthManager {
+  constructor() {
+    this.authToken = null;
+    this.plexOauth = null;
+    this.currentPinId = null;
+  }
+
+  async getAuthToken() {
+    // Try static token first
+    const staticToken = process.env.PLEX_TOKEN;
+    if (staticToken) {
+      return staticToken;
+    }
+
+    // Return stored OAuth token if available
+    if (this.authToken) {
+      return this.authToken;
+    }
+
+    throw new Error('No authentication token available. Please authenticate first using the authenticate_plex tool or set PLEX_TOKEN environment variable.');
+  }
+
+  initializeOAuth() {
+    if (this.plexOauth) {
+      return this.plexOauth;
+    }
+
+    const clientInfo = {
+      clientIdentifier: process.env.PLEX_CLIENT_ID || 'plex-mcp-client',
+      product: process.env.PLEX_PRODUCT || 'Plex MCP Server',
+      device: process.env.PLEX_DEVICE || 'MCP Server',
+      version: process.env.PLEX_VERSION || '1.0.0',
+      forwardUrl: process.env.PLEX_REDIRECT_URL || 'https://app.plex.tv/auth#!',
+      platform: process.env.PLEX_PLATFORM || 'Web'
+    };
+
+    this.plexOauth = new PlexOauth(clientInfo);
+    return this.plexOauth;
+  }
+
+  async requestAuthUrl() {
+    const oauth = this.initializeOAuth();
+    try {
+      const [hostedUILink, pinId] = await oauth.requestHostedLoginURL();
+      this.currentPinId = pinId;
+      return { loginUrl: hostedUILink, pinId };
+    } catch (error) {
+      throw new Error(`Failed to request authentication URL: ${error.message}`);
+    }
+  }
+
+  async checkAuthToken(pinId = null) {
+    const oauth = this.initializeOAuth();
+    const pin = pinId || this.currentPinId;
+    
+    if (!pin) {
+      throw new Error('No pin ID available. Please request authentication first.');
+    }
+
+    try {
+      const authToken = await oauth.checkForAuthToken(pin);
+      if (authToken) {
+        this.authToken = authToken;
+        return authToken;
+      }
+      return null;
+    } catch (error) {
+      throw new Error(`Failed to check authentication token: ${error.message}`);
+    }
+  }
+
+  clearAuth() {
+    this.authToken = null;
+    this.currentPinId = null;
+  }
+}
 
 class PlexMCPServer {
   constructor() {
@@ -22,6 +100,7 @@ class PlexMCPServer {
       }
     );
 
+    this.authManager = new PlexAuthManager();
     this.setupToolHandlers();
   }
 
@@ -623,6 +702,38 @@ class PlexMCPServer {
               required: [],
             },
           },
+          {
+            name: "authenticate_plex",
+            description: "Initiate Plex OAuth authentication flow to get user login URL",
+            inputSchema: {
+              type: "object",
+              properties: {},
+              required: [],
+            },
+          },
+          {
+            name: "check_auth_status",
+            description: "Check if Plex authentication is complete and retrieve the auth token",
+            inputSchema: {
+              type: "object",
+              properties: {
+                pin_id: {
+                  type: "string",
+                  description: "Optional pin ID to check. If not provided, uses the last requested pin.",
+                },
+              },
+              required: [],
+            },
+          },
+          {
+            name: "clear_auth",
+            description: "Clear stored authentication credentials",
+            inputSchema: {
+              type: "object",
+              properties: {},
+              required: [],
+            },
+          },
         ],
       };
     });
@@ -666,10 +777,130 @@ class PlexMCPServer {
           return await this.handleGetLibraryStats(request.params.arguments);
         case "get_listening_stats":
           return await this.handleGetListeningStats(request.params.arguments);
+        case "authenticate_plex":
+          return await this.handleAuthenticatePlex(request.params.arguments);
+        case "check_auth_status":
+          return await this.handleCheckAuthStatus(request.params.arguments);
+        case "clear_auth":
+          return await this.handleClearAuth(request.params.arguments);
         default:
           throw new Error(`Unknown tool: ${request.params.name}`);
       }
     });
+  }
+
+  async handleAuthenticatePlex(args) {
+    try {
+      const { loginUrl, pinId } = await this.authManager.requestAuthUrl();
+      
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Plex Authentication Started
+
+**Next Steps:**
+1. Open this URL in your browser: ${loginUrl}
+2. Sign into your Plex account  
+3. After signing in, run the check_auth_status tool to complete authentication
+
+**Pin ID:** ${pinId}
+
+Note: Keep this pin ID if you want to check auth status manually later.`
+          }
+        ]
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text", 
+            text: `❌ Authentication Error: ${error.message}`
+          }
+        ],
+        isError: true
+      };
+    }
+  }
+
+  async handleCheckAuthStatus(args) {
+    const { pin_id } = args;
+    
+    try {
+      const authToken = await this.authManager.checkAuthToken(pin_id);
+      
+      if (authToken) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `✅ Plex Authentication Successful!
+
+Your authentication token has been stored and will be used for all Plex API requests. You can now use all Plex tools without needing the PLEX_TOKEN environment variable.
+
+**Note:** This token is stored only for this session. For persistent authentication, consider setting the PLEX_TOKEN environment variable.`
+            }
+          ]
+        };
+      } else {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `⏳ Authentication Pending
+
+The user has not yet completed the authentication process. Please:
+
+1. Make sure you've visited the login URL from the authenticate_plex tool
+2. Sign into your Plex account in the browser
+3. Try checking the auth status again in a few moments
+
+You can run check_auth_status again to check if authentication is complete.`
+            }
+          ]
+        };
+      }
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `❌ Auth Status Check Error: ${error.message}`
+          }
+        ],
+        isError: true
+      };
+    }
+  }
+
+  async handleClearAuth(args) {
+    try {
+      this.authManager.clearAuth();
+      
+      return {
+        content: [
+          {
+            type: "text",
+            text: `🔄 Authentication Cleared
+
+All stored authentication credentials have been cleared. To use Plex tools again, you'll need to either:
+
+1. Set the PLEX_TOKEN environment variable, or
+2. Run the authenticate_plex tool to sign in again`
+          }
+        ]
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `❌ Clear Auth Error: ${error.message}`
+          }
+        ],
+        isError: true
+      };
+    }
   }
 
   async handlePlexSearch(args) {
@@ -706,11 +937,7 @@ class PlexMCPServer {
     
     try {
       const plexUrl = process.env.PLEX_URL || 'http://localhost:32400';
-      const plexToken = process.env.PLEX_TOKEN;
-      
-      if (!plexToken) {
-        throw new Error('PLEX_TOKEN environment variable is required');
-      }
+      const plexToken = await this.authManager.getAuthToken();
 
       const searchUrl = `${plexUrl}/search`;
       const params = {
@@ -891,11 +1118,7 @@ class PlexMCPServer {
   async handleBrowseLibraries(args) {
     try {
       const plexUrl = process.env.PLEX_URL || 'http://localhost:32400';
-      const plexToken = process.env.PLEX_TOKEN;
-      
-      if (!plexToken) {
-        throw new Error('PLEX_TOKEN environment variable is required');
-      }
+      const plexToken = await this.authManager.getAuthToken();
 
       const librariesUrl = `${plexUrl}/library/sections`;
       const params = {
@@ -1007,11 +1230,7 @@ class PlexMCPServer {
     
     try {
       const plexUrl = process.env.PLEX_URL || 'http://localhost:32400';
-      const plexToken = process.env.PLEX_TOKEN;
-      
-      if (!plexToken) {
-        throw new Error('PLEX_TOKEN environment variable is required');
-      }
+      const plexToken = await this.authManager.getAuthToken();
 
       const libraryUrl = `${plexUrl}/library/sections/${library_id}/all`;
       const params = {
@@ -1133,11 +1352,7 @@ class PlexMCPServer {
     
     try {
       const plexUrl = process.env.PLEX_URL || 'http://localhost:32400';
-      const plexToken = process.env.PLEX_TOKEN;
-      
-      if (!plexToken) {
-        throw new Error('PLEX_TOKEN environment variable is required');
-      }
+      const plexToken = await this.authManager.getAuthToken();
 
       let recentUrl;
       if (library_id) {
@@ -1233,11 +1448,7 @@ class PlexMCPServer {
     
     try {
       const plexUrl = process.env.PLEX_URL || 'http://localhost:32400';
-      const plexToken = process.env.PLEX_TOKEN;
-      
-      if (!plexToken) {
-        throw new Error('PLEX_TOKEN environment variable is required');
-      }
+      const plexToken = await this.authManager.getAuthToken();
 
       const historyUrl = `${plexUrl}/status/sessions/history/all`;
       const params = {
@@ -1357,11 +1568,7 @@ class PlexMCPServer {
     
     try {
       const plexUrl = process.env.PLEX_URL || 'http://localhost:32400';
-      const plexToken = process.env.PLEX_TOKEN;
-      
-      if (!plexToken) {
-        throw new Error('PLEX_TOKEN environment variable is required');
-      }
+      const plexToken = await this.authManager.getAuthToken();
 
       const onDeckUrl = `${plexUrl}/library/onDeck`;
       const params = {
@@ -1460,11 +1667,7 @@ class PlexMCPServer {
     
     try {
       const plexUrl = process.env.PLEX_URL || 'http://localhost:32400';
-      const plexToken = process.env.PLEX_TOKEN;
-      
-      if (!plexToken) {
-        throw new Error('PLEX_TOKEN environment variable is required');
-      }
+      const plexToken = await this.authManager.getAuthToken();
 
       const playlistsUrl = `${plexUrl}/playlists`;
       const params = {
@@ -1512,11 +1715,7 @@ class PlexMCPServer {
     
     try {
       const plexUrl = process.env.PLEX_URL || 'http://localhost:32400';
-      const plexToken = process.env.PLEX_TOKEN;
-      
-      if (!plexToken) {
-        throw new Error('PLEX_TOKEN environment variable is required');
-      }
+      const plexToken = await this.authManager.getAuthToken();
 
       // First get playlist info
       const playlistUrl = `${plexUrl}/playlists/${playlist_id}`;
@@ -1730,11 +1929,7 @@ class PlexMCPServer {
     
     try {
       const plexUrl = process.env.PLEX_URL || 'http://localhost:32400';
-      const plexToken = process.env.PLEX_TOKEN;
-      
-      if (!plexToken) {
-        throw new Error('PLEX_TOKEN environment variable is required');
-      }
+      const plexToken = await this.authManager.getAuthToken();
 
       // First get server info to get machine identifier
       const serverResponse = await axios.get(`${plexUrl}/`, {
@@ -1839,11 +2034,7 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
     
     try {
       const plexUrl = process.env.PLEX_URL || 'http://localhost:32400';
-      const plexToken = process.env.PLEX_TOKEN;
-      
-      if (!plexToken) {
-        throw new Error('PLEX_TOKEN environment variable is required');
-      }
+      const plexToken = await this.authManager.getAuthToken();
 
       // Get playlist info before adding items
       const playlistInfoUrl = `${plexUrl}/playlists/${playlist_id}`;
@@ -2000,11 +2191,7 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
     
     try {
       const plexUrl = process.env.PLEX_URL || 'http://localhost:32400';
-      const plexToken = process.env.PLEX_TOKEN;
-      
-      if (!plexToken) {
-        throw new Error('PLEX_TOKEN environment variable is required');
-      }
+      const plexToken = await this.authManager.getAuthToken();
 
       // Get playlist info before removing items
       const playlistInfoUrl = `${plexUrl}/playlists/${playlist_id}`;
@@ -2184,11 +2371,7 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
     
     try {
       const plexUrl = process.env.PLEX_URL || 'http://localhost:32400';
-      const plexToken = process.env.PLEX_TOKEN;
-      
-      if (!plexToken) {
-        throw new Error('PLEX_TOKEN environment variable is required');
-      }
+      const plexToken = await this.authManager.getAuthToken();
 
       const deleteUrl = `${plexUrl}/playlists/${playlist_id}`;
       const params = {
@@ -2228,11 +2411,7 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
     
     try {
       const plexUrl = process.env.PLEX_URL || 'http://localhost:32400';
-      const plexToken = process.env.PLEX_TOKEN;
-      
-      if (!plexToken) {
-        throw new Error('PLEX_TOKEN environment variable is required');
-      }
+      const plexToken = await this.authManager.getAuthToken();
 
       const statusResults = [];
       
@@ -2675,11 +2854,7 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
     
     try {
       const plexUrl = process.env.PLEX_URL || 'http://localhost:32400';
-      const plexToken = process.env.PLEX_TOKEN;
-      
-      if (!plexToken) {
-        throw new Error('PLEX_TOKEN environment variable is required');
-      }
+      const plexToken = await this.authManager.getAuthToken();
 
       let collectionsUrl;
       if (library_id) {
@@ -2729,11 +2904,7 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
     
     try {
       const plexUrl = process.env.PLEX_URL || 'http://localhost:32400';
-      const plexToken = process.env.PLEX_TOKEN;
-      
-      if (!plexToken) {
-        throw new Error('PLEX_TOKEN environment variable is required');
-      }
+      const plexToken = await this.authManager.getAuthToken();
 
       const collectionUrl = `${plexUrl}/library/collections/${collection_id}/children`;
       const params = {
@@ -2832,11 +3003,7 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
     
     try {
       const plexUrl = process.env.PLEX_URL || 'http://localhost:32400';
-      const plexToken = process.env.PLEX_TOKEN;
-      
-      if (!plexToken) {
-        throw new Error('PLEX_TOKEN environment variable is required');
-      }
+      const plexToken = await this.authManager.getAuthToken();
 
       const mediaUrl = `${plexUrl}/library/metadata/${item_key}`;
       const params = {
@@ -3125,11 +3292,7 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
     
     try {
       const plexUrl = process.env.PLEX_URL || 'http://localhost:32400';
-      const plexToken = process.env.PLEX_TOKEN;
-      
-      if (!plexToken) {
-        throw new Error('PLEX_TOKEN environment variable is required');
-      }
+      const plexToken = await this.authManager.getAuthToken();
 
       // Get library information first
       const librariesResponse = await axios.get(`${plexUrl}/library/sections`, { 
@@ -3480,11 +3643,7 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
     
     try {
       const plexUrl = process.env.PLEX_URL || 'http://localhost:32400';
-      const plexToken = process.env.PLEX_TOKEN;
-      
-      if (!plexToken) {
-        throw new Error('PLEX_TOKEN environment variable is required');
-      }
+      const plexToken = await this.authManager.getAuthToken();
 
       // Auto-detect music libraries if not specified
       let musicLibraries = [];
