@@ -1,6 +1,6 @@
 {
   "name": "plex-mcp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A Model Context Protocol (MCP) server that enables Claude to query and manage Plex media libraries.",
   "main": "index.js",
   "bin": {
@@ -40,12 +40,18 @@
   "homepage": "https://github.com/vyb1ng/plex-mcp#readme",
   "type": "commonjs",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.12.1",
-    "axios": "^1.9.0"
+    "@modelcontextprotocol/sdk": "^1.12.3",
+    "axios": "^1.10.0",
+    "plex-oauth": "^2.1.0"
   },
   "devDependencies": {
-    "jest": "^29.7.0",
     "@types/jest": "^29.5.14",
-    "axios-mock-adapter": "^2.1.0"
+    "axios-mock-adapter": "^2.1.0",
+    "jest": "^30.0.0"
+  },
+  "overrides": {
+    "plex-oauth": {
+      "axios": "^1.10.0"
+    }
   }
 }
