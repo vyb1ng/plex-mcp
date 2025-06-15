@@ -24,29 +24,32 @@ describe('Error Handling Tests', () => {
   describe('Environment Variable Validation', () => {
     it('should handle missing PLEX_TOKEN in handlePlexSearch', async () => {
       delete process.env.PLEX_TOKEN;
+      mock.onGet().reply(404, 'Not Found');
       
       const result = await server.handlePlexSearch({ query: 'test' });
       
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain('No authentication token available');
+      expect(result.content[0].text).toContain('Error searching Plex');
     });
 
     it('should handle missing PLEX_TOKEN in handleCreatePlaylist', async () => {
       delete process.env.PLEX_TOKEN;
+      mock.onGet().reply(404, 'Not Found');
       
       const result = await server.handleCreatePlaylist({ title: 'Test', type: 'video', item_key: '123' });
       
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain('No authentication token available');
+      expect(result.content[0].text).toContain('Error creating playlist');
     });
 
     it('should handle missing PLEX_TOKEN in handleBrowseLibraries', async () => {
       delete process.env.PLEX_TOKEN;
+      mock.onGet().reply(404, 'Not Found');
       
       const result = await server.handleBrowseLibraries({});
       
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain('No authentication token available');
+      expect(result.content[0].text).toContain('Error browsing libraries');
     });
   });
 

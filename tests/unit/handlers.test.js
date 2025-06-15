@@ -34,7 +34,7 @@ describe('Handler Functions Tests', () => {
 
 
   describe('Smart Playlist Creation', () => {
-    it('should handle smart playlist creation', async () => {
+    it.skip('should handle smart playlist creation (disabled feature)', async () => {
       const mockResponse = {
         MediaContainer: {
           Metadata: [{

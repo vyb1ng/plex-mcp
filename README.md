@@ -161,6 +161,16 @@ For automated setups or if you prefer manual token management:
 
 ## MCP Tools
 
+### 🔴 Known Issues
+
+**⚠️ Smart Playlist Creation (TEMPORARILY DISABLED)**
+- The `create_smart_playlist` tool is currently disabled due to filter logic bugs
+- Smart playlists were being created but with incorrect content and inflated metadata
+- Use the regular `create_playlist` tool as an alternative
+- Issue under investigation - will be re-enabled once fixed
+
+### ✅ Working Tools
+
 ### Authentication Tools
 
 #### authenticate_plex
@@ -204,3 +214,75 @@ Search for content in your Plex libraries.
   "limit": 5
 }
 ```
+
+#### browse_libraries
+List all available Plex libraries (Movies, TV Shows, Music, etc.)
+
+#### browse_library
+Browse content within a specific library with filtering and sorting options
+
+#### get_recently_added
+Get recently added content from Plex libraries
+
+#### get_watch_history
+Get playback history for the Plex server
+
+#### get_on_deck
+Get 'On Deck' items (continue watching) for users
+
+### Playlist Tools
+
+#### list_playlists
+List all playlists on the Plex server
+
+#### browse_playlist
+Browse and view the contents of a specific playlist
+
+#### create_playlist ✅
+Create a new regular playlist (requires an initial item)
+
+#### ~~create_smart_playlist~~ ❌ **DISABLED**
+~~Create smart playlists with filter criteria~~ - Currently disabled due to filter logic bugs
+
+#### add_to_playlist
+Add items to an existing playlist
+
+#### delete_playlist
+Delete an existing playlist
+
+### Media Information Tools
+
+#### get_watched_status
+Check watch status and progress for specific content items
+
+#### get_collections
+List all collections available on the Plex server
+
+#### browse_collection
+Browse content within a specific collection
+
+#### get_media_info
+Get detailed technical information about media files (codecs, bitrates, file sizes, etc.)
+
+#### get_library_stats
+Get comprehensive statistics about Plex libraries (storage usage, file counts, content breakdown, etc.)
+
+#### get_listening_stats
+Get detailed listening statistics and music recommendations based on play history
+
+## Tool Status Summary
+
+### ✅ Fully Working
+- All authentication tools (`authenticate_plex`, `check_auth_status`, `clear_auth`)
+- All search and browse tools (`search_plex`, `browse_libraries`, `browse_library`)
+- All activity tools (`get_recently_added`, `get_watch_history`, `get_on_deck`)  
+- Regular playlist tools (`list_playlists`, `browse_playlist`, `create_playlist`, `add_to_playlist`, `delete_playlist`)
+- All information tools (`get_watched_status`, `get_collections`, `browse_collection`, `get_media_info`, `get_library_stats`, `get_listening_stats`)
+
+### ❌ Temporarily Disabled
+- `create_smart_playlist` - Filter logic is broken, returns incorrect content with inflated metadata
+
+### ⚠️ Known Limitations
+- Smart playlist filtering system needs complete rework
+- Some advanced filter combinations may not work as expected
+- SSL certificate validation can be disabled with `PLEX_VERIFY_SSL=false` environment variable
