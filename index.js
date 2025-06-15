@@ -2034,7 +2034,7 @@ All stored authentication credentials have been cleared. To use Plex tools again
   }
 
   async handleCreatePlaylist(args) {
-    const { title, type, item_key } = args;
+    const { title, type, item_key, smart = false } = args;
     
     try {
       const plexUrl = process.env.PLEX_URL || 'https://app.plex.tv';
