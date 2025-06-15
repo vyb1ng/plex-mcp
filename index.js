@@ -8,12 +8,60 @@ const {
 } = require("@modelcontextprotocol/sdk/types.js");
 const axios = require('axios');
 const { PlexOauth } = require('plex-oauth');
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
 
 class PlexAuthManager {
   constructor() {
     this.authToken = null;
     this.plexOauth = null;
     this.currentPinId = null;
+    this.tokenFilePath = path.join(os.homedir(), '.plex-mcp-token');
+  }
+
+  async loadPersistedToken() {
+    try {
+      if (fs.existsSync(this.tokenFilePath)) {
+        const tokenData = fs.readFileSync(this.tokenFilePath, 'utf8');
+        const parsed = JSON.parse(tokenData);
+        if (parsed.token && parsed.timestamp) {
+          // Check if token is less than 1 year old
+          const tokenAge = Date.now() - parsed.timestamp;
+          const oneYear = 365 * 24 * 60 * 60 * 1000;
+          if (tokenAge < oneYear) {
+            this.authToken = parsed.token;
+            return parsed.token;
+          }
+        }
+      }
+    } catch (error) {
+      // If there's any error reading the token, just continue without it
+      console.error('Error loading persisted token:', error.message);
+    }
+    return null;
+  }
+
+  async saveToken(token) {
+    try {
+      const tokenData = {
+        token: token,
+        timestamp: Date.now()
+      };
+      fs.writeFileSync(this.tokenFilePath, JSON.stringify(tokenData, null, 2), 'utf8');
+    } catch (error) {
+      console.error('Error saving token:', error.message);
+    }
+  }
+
+  async clearPersistedToken() {
+    try {
+      if (fs.existsSync(this.tokenFilePath)) {
+        fs.unlinkSync(this.tokenFilePath);
+      }
+    } catch (error) {
+      console.error('Error clearing persisted token:', error.message);
+    }
   }
 
   async getAuthToken() {
@@ -28,6 +76,12 @@ class PlexAuthManager {
       return this.authToken;
     }
 
+    // Try to load persisted token
+    const persistedToken = await this.loadPersistedToken();
+    if (persistedToken) {
+      return persistedToken;
+    }
+
     throw new Error('No authentication token available. Please authenticate first using the authenticate_plex tool or set PLEX_TOKEN environment variable.');
   }
 
@@ -38,8 +92,8 @@ class PlexAuthManager {
 
     const clientInfo = {
       clientIdentifier: process.env.PLEX_CLIENT_ID || 'plex-mcp-client',
-      product: process.env.PLEX_PRODUCT || 'Plex MCP Server',
-      device: process.env.PLEX_DEVICE || 'MCP Server',
+      product: process.env.PLEX_PRODUCT || 'PlexMCP',
+      device: process.env.PLEX_DEVICE || 'PlexMCP',
       version: process.env.PLEX_VERSION || '1.0.0',
       forwardUrl: process.env.PLEX_REDIRECT_URL || 'https://app.plex.tv/auth#!',
       platform: process.env.PLEX_PLATFORM || 'Web'
@@ -72,6 +126,7 @@ class PlexAuthManager {
       const authToken = await oauth.checkForAuthToken(pin);
       if (authToken) {
         this.authToken = authToken;
+        await this.saveToken(authToken);
         return authToken;
       }
       return null;
@@ -80,9 +135,10 @@ class PlexAuthManager {
     }
   }
 
-  clearAuth() {
+  async clearAuth() {
     this.authToken = null;
     this.currentPinId = null;
+    await this.clearPersistedToken();
   }
 }
 
@@ -488,7 +544,7 @@ class PlexMCPServer {
           },
           {
             name: "create_playlist",
-            description: "Create a new playlist on the Plex server. Note: Non-smart playlists require an initial item (item_key parameter) to be created successfully.",
+            description: "Create a new regular playlist on the Plex server. Requires an initial item (item_key parameter) to be created successfully. Smart playlists are not supported due to their complex filter requirements.",
             inputSchema: {
               type: "object",
               properties: {
@@ -501,19 +557,76 @@ class PlexMCPServer {
                   enum: ["audio", "video", "photo"],
                   description: "The type of playlist to create",
                 },
-                smart: {
-                  type: "boolean",
-                  description: "Whether to create a smart playlist (default: false)",
-                  default: false,
-                },
                 item_key: {
                   type: "string",
-                  description: "The key of an initial item to add to the playlist. Required for non-smart playlists, optional for smart playlists.",
+                  description: "The key of an initial item to add to the playlist. Required for playlist creation. Get item keys from search_plex or browse_library results.",
                 },
               },
-              required: ["title", "type"],
+              required: ["title", "type", "item_key"],
             },
           },
+          // TEMPORARILY DISABLED - Smart playlist filtering is broken
+          // {
+          //   name: "create_smart_playlist", 
+          //   description: "Create a new smart playlist with filter criteria. Smart playlists automatically populate based on specified conditions.",
+          //   inputSchema: {
+          //     type: "object",
+          //     properties: {
+          //       title: {
+          //         type: "string",
+          //         description: "The title/name for the new smart playlist",
+          //       },
+          //       type: {
+          //         type: "string",
+          //         enum: ["audio", "video", "photo"],
+          //         description: "The type of content for the smart playlist",
+          //       },
+          //       library_id: {
+          //         type: "string",
+          //         description: "The library ID to create the smart playlist in. Use browse_libraries to get library IDs.",
+          //       },
+          //       filters: {
+          //         type: "array",
+          //         description: "Array of filter conditions for the smart playlist",
+          //         items: {
+          //           type: "object",
+          //           properties: {
+          //             field: {
+          //               type: "string",
+          //               enum: ["artist.title", "album.title", "track.title", "genre.tag", "year", "rating", "addedAt", "lastViewedAt", "viewCount"],
+          //               description: "The field to filter on"
+          //             },
+          //             operator: {
+          //               type: "string",
+          //               enum: ["is", "isnot", "contains", "doesnotcontain", "beginswith", "endswith", "gt", "gte", "lt", "lte"],
+          //               description: "The comparison operator"
+          //             },
+          //             value: {
+          //               type: "string",
+          //               description: "The value to compare against"
+          //             }
+          //           },
+          //           required: ["field", "operator", "value"]
+          //         },
+          //         minItems: 1
+          //       },
+          //       sort: {
+          //         type: "string",
+          //         enum: ["artist.titleSort", "album.titleSort", "track.titleSort", "addedAt", "year", "rating", "lastViewedAt", "random"],
+          //         description: "How to sort the smart playlist results (optional)",
+          //         default: "artist.titleSort"
+          //       },
+          //       limit: {
+          //         type: "integer",
+          //         description: "Maximum number of items in the smart playlist (optional)",
+          //         minimum: 1,
+          //         maximum: 1000,
+          //         default: 100
+          //       }
+          //     },
+          //     required: ["title", "type", "library_id", "filters"],
+          //   },
+          // },
           {
             name: "add_to_playlist",
             description: "Add items to an existing playlist",
@@ -758,6 +871,9 @@ class PlexMCPServer {
           return await this.handleBrowsePlaylist(request.params.arguments);
         case "create_playlist":
           return await this.handleCreatePlaylist(request.params.arguments);
+        // TEMPORARILY DISABLED - Smart playlist filtering is broken
+        // case "create_smart_playlist":
+        //   return await this.handleCreateSmartPlaylist(request.params.arguments);
         case "add_to_playlist":
           return await this.handleAddToPlaylist(request.params.arguments);
         // DISABLED: remove_from_playlist - PROBLEMATIC operation
@@ -800,13 +916,19 @@ class PlexMCPServer {
             text: `Plex Authentication Started
 
 **Next Steps:**
-1. Open this URL in your browser: ${loginUrl}
-2. Sign into your Plex account  
-3. After signing in, run the check_auth_status tool to complete authentication
+1. Open this URL in your browser:
+
+\`\`\`
+${loginUrl.replace(/\[/g, '%5B').replace(/\]/g, '%5D').replace(/!/g, '%21')}
+\`\`\`
+
+2. Sign into your Plex account when prompted
+3. **IMPORTANT:** After signing in, you MUST return here and run the \`check_auth_status\` tool to complete the authentication process
+4. Only after running \`check_auth_status\` will your token be saved and ready for use
 
 **Pin ID:** ${pinId}
 
-Note: Keep this pin ID if you want to check auth status manually later.`
+⚠️ **Don't forget:** The authentication is not complete until you return and run \`check_auth_status\`!`
           }
         ]
       };
@@ -875,7 +997,7 @@ You can run check_auth_status again to check if authentication is complete.`
 
   async handleClearAuth(args) {
     try {
-      this.authManager.clearAuth();
+      await this.authManager.clearAuth();
       
       return {
         content: [
@@ -936,7 +1058,7 @@ All stored authentication credentials have been cleared. To use Plex tools again
     } = args;
     
     try {
-      const plexUrl = process.env.PLEX_URL || 'http://localhost:32400';
+      const plexUrl = process.env.PLEX_URL || 'https://app.plex.tv';
       const plexToken = await this.authManager.getAuthToken();
 
       const searchUrl = `${plexUrl}/search`;
@@ -1117,7 +1239,7 @@ All stored authentication credentials have been cleared. To use Plex tools again
 
   async handleBrowseLibraries(args) {
     try {
-      const plexUrl = process.env.PLEX_URL || 'http://localhost:32400';
+      const plexUrl = process.env.PLEX_URL || 'https://app.plex.tv';
       const plexToken = await this.authManager.getAuthToken();
 
       const librariesUrl = `${plexUrl}/library/sections`;
@@ -1229,7 +1351,7 @@ All stored authentication credentials have been cleared. To use Plex tools again
     } = args;
     
     try {
-      const plexUrl = process.env.PLEX_URL || 'http://localhost:32400';
+      const plexUrl = process.env.PLEX_URL || 'https://app.plex.tv';
       const plexToken = await this.authManager.getAuthToken();
 
       const libraryUrl = `${plexUrl}/library/sections/${library_id}/all`;
@@ -1351,7 +1473,7 @@ All stored authentication credentials have been cleared. To use Plex tools again
     const { library_id, limit = 15, chunk_size = 10, chunk_offset = 0 } = args;
     
     try {
-      const plexUrl = process.env.PLEX_URL || 'http://localhost:32400';
+      const plexUrl = process.env.PLEX_URL || 'https://app.plex.tv';
       const plexToken = await this.authManager.getAuthToken();
 
       let recentUrl;
@@ -1447,7 +1569,7 @@ All stored authentication credentials have been cleared. To use Plex tools again
     const { limit = 20, account_id, chunk_size = 10, chunk_offset = 0 } = args;
     
     try {
-      const plexUrl = process.env.PLEX_URL || 'http://localhost:32400';
+      const plexUrl = process.env.PLEX_URL || 'https://app.plex.tv';
       const plexToken = await this.authManager.getAuthToken();
 
       const historyUrl = `${plexUrl}/status/sessions/history/all`;
@@ -1567,7 +1689,7 @@ All stored authentication credentials have been cleared. To use Plex tools again
     const { limit = 15 } = args;
     
     try {
-      const plexUrl = process.env.PLEX_URL || 'http://localhost:32400';
+      const plexUrl = process.env.PLEX_URL || 'https://app.plex.tv';
       const plexToken = await this.authManager.getAuthToken();
 
       const onDeckUrl = `${plexUrl}/library/onDeck`;
@@ -1666,7 +1788,7 @@ All stored authentication credentials have been cleared. To use Plex tools again
     const { playlist_type } = args;
     
     try {
-      const plexUrl = process.env.PLEX_URL || 'http://localhost:32400';
+      const plexUrl = process.env.PLEX_URL || 'https://app.plex.tv';
       const plexToken = await this.authManager.getAuthToken();
 
       const playlistsUrl = `${plexUrl}/playlists`;
@@ -1714,7 +1836,7 @@ All stored authentication credentials have been cleared. To use Plex tools again
     const { playlist_id, limit = 50 } = args;
     
     try {
-      const plexUrl = process.env.PLEX_URL || 'http://localhost:32400';
+      const plexUrl = process.env.PLEX_URL || 'https://app.plex.tv';
       const plexToken = await this.authManager.getAuthToken();
 
       // First get playlist info
@@ -1912,23 +2034,10 @@ All stored authentication credentials have been cleared. To use Plex tools again
   }
 
   async handleCreatePlaylist(args) {
-    const { title, type, smart = false, item_key = null } = args;
-    
-    // Validate that item_key is provided for non-smart playlists
-    if (!smart && !item_key) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Error: Non-smart playlists require an initial item. Please provide an item_key parameter with the Plex item key to add to the playlist. You can get item keys by searching or browsing your library first.`,
-          },
-        ],
-        isError: true,
-      };
-    }
+    const { title, type, item_key } = args;
     
     try {
-      const plexUrl = process.env.PLEX_URL || 'http://localhost:32400';
+      const plexUrl = process.env.PLEX_URL || 'https://app.plex.tv';
       const plexToken = await this.authManager.getAuthToken();
 
       // First get server info to get machine identifier
@@ -2018,6 +2127,163 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
     }
   }
 
+  async handleCreateSmartPlaylist(args) {
+    const { title, type, library_id, filters, sort = "artist.titleSort", limit = 100 } = args;
+
+    try {
+      const plexUrl = process.env.PLEX_URL || 'https://app.plex.tv';
+      const plexToken = await this.authManager.getAuthToken();
+
+      // Get server machine identifier
+      const serverResponse = await axios.get(`${plexUrl}`, {
+        headers: {
+          'X-Plex-Token': plexToken,
+          'Accept': 'application/json'
+        },
+        httpsAgent: this.getHttpsAgent()
+      });
+
+      const machineId = serverResponse.data.MediaContainer.machineIdentifier;
+
+      // Build query parameters from filters manually to avoid double encoding
+      const queryParts = [`type=${type === 'audio' ? '10' : '1'}`];
+
+      filters.forEach(filter => {
+        const field = this.mapFilterField(filter.field);
+        const operator = this.mapFilterOperator(filter.operator);
+        
+        if (operator === '=') {
+          // Plex expects triple-encoded format: field%253D%3Dvalue
+          const encodedField = encodeURIComponent(encodeURIComponent(field));
+          const encodedValue = encodeURIComponent(encodeURIComponent(filter.value));
+          queryParts.push(`${encodedField}%253D%3D${encodedValue}`);
+        } else {
+          queryParts.push(`${encodeURIComponent(field)}${operator}${encodeURIComponent(filter.value)}`);
+        }
+      });
+
+      // Build the URI in the format Plex expects
+      const uri = `server://${machineId}/com.plexapp.plugins.library/library/sections/${library_id}/all?${queryParts.join('&')}`;
+
+      // Debug logging
+      console.log('DEBUG: Generated URI:', uri);
+      console.log('DEBUG: Query parts:', queryParts);
+
+      // Create smart playlist using POST to /playlists
+      const createParams = new URLSearchParams();
+      createParams.append('type', type);
+      createParams.append('title', title);
+      createParams.append('smart', '1');
+      createParams.append('uri', uri);
+
+      const response = await axios.post(`${plexUrl}/playlists?${createParams.toString()}`, null, {
+        headers: {
+          'X-Plex-Token': plexToken,
+          'Accept': 'application/json'
+        },
+        httpsAgent: this.getHttpsAgent()
+      });
+
+      const playlistData = response.data.MediaContainer.Metadata[0];
+      
+      return {
+        content: [
+          {
+            type: "text",
+            text: `✅ **Smart Playlist Created Successfully**
+
+**Playlist Details:**
+• **Name:** ${playlistData.title}
+• **Type:** ${playlistData.playlistType}
+• **Tracks:** ${playlistData.leafCount || 0}
+• **Duration:** ${playlistData.duration ? Math.round(playlistData.duration / 60000) + ' minutes' : 'Unknown'}
+• **ID:** ${playlistData.ratingKey}
+
+**Filters Applied:**
+${filters.map(f => `• ${f.field} ${f.operator} "${f.value}"`).join('\n')}
+
+The smart playlist has been created and is now available in your Plex library!`,
+          },
+        ],
+      };
+    } catch (error) {
+      // Enhanced error handling for smart playlists
+      let errorMessage = `Error creating smart playlist: ${error.message}`;
+      
+      if (error.response) {
+        const status = error.response.status;
+        if (status === 400) {
+          errorMessage = `❌ **Smart Playlist Creation Failed (400 Bad Request)**
+
+**Possible issues:**
+• Invalid filter criteria or field names
+• Unsupported operator for the field type
+• Library ID "${library_id}" not found or inaccessible
+• Filter values in wrong format
+
+**Debug info:**
+• Status: ${status}
+• Filters attempted: ${filters.length}
+• Library ID: ${library_id}
+
+**Suggestion:** Try with simpler filters first, or verify library_id with \`browse_libraries\`.`;
+        } else if (status === 401 || status === 403) {
+          errorMessage = `Permission denied: Check your Plex token and server access`;
+        } else if (status >= 500) {
+          errorMessage = `Plex server error (${status}): ${error.message}`;
+        }
+      } else if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND') {
+        errorMessage = `Cannot connect to Plex server: Check PLEX_URL configuration`;
+      }
+      
+      return {
+        content: [
+          {
+            type: "text",
+            text: errorMessage,
+          },
+        ],
+        isError: true,
+      };
+    }
+  }
+
+  // Helper functions for smart playlist field/operator mapping
+  mapFilterField(field) {
+    // Return the field as-is since Plex expects the full dotted notation
+    return field;
+  }
+
+  mapFilterOperator(operator) {
+    const operatorMap = {
+      'is': '=',
+      'isnot': '!=', 
+      'contains': '=',  // Plex uses = for contains on text fields
+      'doesnotcontain': '!=',
+      'beginswith': '=',  // Plex uses = for text matching
+      'endswith': '=',
+      'gt': '>',
+      'gte': '>=',
+      'lt': '<',
+      'lte': '<='
+    };
+    return operatorMap[operator] || operator;
+  }
+
+  mapSortField(sort) {
+    const sortMap = {
+      'artist.titleSort': 'artist',
+      'album.titleSort': 'album',
+      'track.titleSort': 'title', 
+      'addedAt': 'addedAt',
+      'year': 'year',
+      'rating': 'userRating',
+      'lastViewedAt': 'lastViewedAt',
+      'random': 'random'
+    };
+    return sortMap[sort] || sort;
+  }
+
   async handleAddToPlaylist(args) {
     const { playlist_id, item_keys } = args;
     
@@ -2033,7 +2299,7 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
     }
     
     try {
-      const plexUrl = process.env.PLEX_URL || 'http://localhost:32400';
+      const plexUrl = process.env.PLEX_URL || 'https://app.plex.tv';
       const plexToken = await this.authManager.getAuthToken();
 
       // Get playlist info before adding items
@@ -2061,7 +2327,8 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
           },
           httpsAgent: this.getHttpsAgent()
         });
-        beforeCount = beforeResponse.data.MediaContainer?.totalSize || 0;
+        const beforeItems = beforeResponse.data.MediaContainer?.Metadata || [];
+        beforeCount = beforeItems.length; // Use actual count of items instead of totalSize
       } catch (error) {
         // If items endpoint fails, playlist might be empty
         beforeCount = 0;
@@ -2079,35 +2346,136 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
       }
 
       const addUrl = `${plexUrl}/playlists/${playlist_id}/items`;
-      const params = {
-        'X-Plex-Token': plexToken,
-        uri: item_keys.map(key => `server://${machineIdentifier}/com.plexapp.plugins.library/library/metadata/${key}`).join(',')
-      };
-
-      const response = await axios.put(addUrl, null, { 
-        params,
-        httpsAgent: this.getHttpsAgent()
-      });
+      
+      // Try different batch approaches for multiple items
+      let response;
+      let batchMethod = '';
+      
+      if (item_keys.length === 1) {
+        // Single item - use existing proven method
+        const params = {
+          'X-Plex-Token': plexToken,
+          uri: `server://${machineIdentifier}/com.plexapp.plugins.library/library/metadata/${item_keys[0]}`
+        };
+        response = await axios.put(addUrl, null, { params, httpsAgent: this.getHttpsAgent() });
+        batchMethod = 'single';
+        
+      } else {
+        // Multiple items - use sequential individual adds (only reliable method)
+        console.log(`Adding ${item_keys.length} items sequentially (batch operations are unreliable)...`);
+        batchMethod = 'sequential-reliable';
+        let sequentialCount = 0;
+        const sequentialResults = [];
+        
+        for (const itemKey of item_keys) {
+          try {
+            const singleParams = {
+              'X-Plex-Token': plexToken,
+              uri: `server://${machineIdentifier}/com.plexapp.plugins.library/library/metadata/${itemKey}`
+            };
+            
+            if (process.env.DEBUG_PLAYLISTS) {
+              console.log(`Adding item ${itemKey} individually...`);
+            }
+            
+            const singleResponse = await axios.put(addUrl, null, { 
+              params: singleParams, 
+              httpsAgent: this.getHttpsAgent(),
+              timeout: 10000, // 10 second timeout
+              validateStatus: function (status) {
+                return status >= 200 && status < 300; // Only accept 2xx status codes
+              }
+            });
+            
+            if (singleResponse.status >= 200 && singleResponse.status < 300) {
+              sequentialCount++;
+              sequentialResults.push({ itemKey, success: true });
+              if (process.env.DEBUG_PLAYLISTS) {
+                console.log(`✅ Successfully added item ${itemKey}`);
+              }
+            } else {
+              sequentialResults.push({ itemKey, success: false, status: singleResponse.status });
+              console.warn(`❌ Failed to add item ${itemKey}, status: ${singleResponse.status}`);
+            }
+            
+            // Small delay between sequential operations for API stability
+            await new Promise(resolve => setTimeout(resolve, 200));
+            
+          } catch (seqError) {
+            console.warn(`❌ Sequential add failed for item ${itemKey}:`, seqError.message);
+            sequentialResults.push({ itemKey, success: false, error: seqError.message });
+          }
+        }
+        
+        // Create response for sequential operations
+        response = {
+          status: sequentialCount > 0 ? 200 : 400,
+          data: { 
+            sequentialAdded: sequentialCount,
+            sequentialResults: sequentialResults,
+            totalRequested: item_keys.length
+          }
+        };
+        
+        if (process.env.DEBUG_PLAYLISTS) {
+          console.log(`Sequential operation complete: ${sequentialCount}/${item_keys.length} items added successfully`);
+        }
+      }
       
       // Check if the PUT request was successful based on HTTP status
       const putSuccessful = response.status >= 200 && response.status < 300;
       
-      // Small delay to allow Plex server to update
-      await new Promise(resolve => setTimeout(resolve, 100));
-      
-      // Verify the addition by checking the playlist items again
+      // Verify the addition with retries due to Plex API reliability issues
       let afterCount = 0;
-      try {
-        const afterResponse = await axios.get(playlistItemsUrl, { 
-          params: {
-            'X-Plex-Token': plexToken
-          },
-          httpsAgent: this.getHttpsAgent()
-        });
-        afterCount = afterResponse.data.MediaContainer?.totalSize || 0;
-      } catch (error) {
-        // If items endpoint fails, playlist might be empty
-        afterCount = 0;
+      let retryCount = 0;
+      const maxRetries = 3;
+      
+      while (retryCount <= maxRetries) {
+        await new Promise(resolve => setTimeout(resolve, 300 * (retryCount + 1))); // Increasing delay
+        
+        try {
+          // Try both the items endpoint and playlist metadata endpoint
+          const [itemsResponse, playlistResponse] = await Promise.allSettled([
+            axios.get(playlistItemsUrl, { 
+              params: { 'X-Plex-Token': plexToken },
+              httpsAgent: this.getHttpsAgent()
+            }),
+            axios.get(playlistInfoUrl, { 
+              params: { 'X-Plex-Token': plexToken },
+              httpsAgent: this.getHttpsAgent()
+            })
+          ]);
+          
+          // Try to get count from items endpoint first
+          if (itemsResponse.status === 'fulfilled' && itemsResponse.value?.data) {
+            try {
+              const items = itemsResponse.value.data.MediaContainer?.Metadata || [];
+              afterCount = items.length;
+              break; // Success, exit retry loop
+            } catch (parseError) {
+              console.warn('Error parsing items response:', parseError.message);
+            }
+          }
+          
+          // Fall back to playlist metadata if items endpoint failed
+          if (playlistResponse.status === 'fulfilled' && playlistResponse.value?.data) {
+            try {
+              const metadata = playlistResponse.value.data.MediaContainer?.Metadata?.[0];
+              afterCount = parseInt(metadata?.leafCount || 0, 10) || 0;
+              break; // Success, exit retry loop
+            } catch (parseError) {
+              console.warn('Error parsing playlist metadata:', parseError.message);
+            }
+          }
+          
+        } catch (error) {
+          retryCount++;
+          if (retryCount > maxRetries) {
+            console.warn(`Failed to get playlist count after ${maxRetries} retries:`, error.message);
+            // If all retries failed, fall back to optimistic counting
+            afterCount = beforeCount + (putSuccessful ? item_keys.length : 0);
+          }
+        }
       }
       
       const actualAdded = afterCount - beforeCount;
@@ -2117,6 +2485,46 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
       resultText += `• Attempted to add: ${attempted} item(s)\n`;
       resultText += `• Actually added: ${actualAdded} item(s)\n`;
       resultText += `• Playlist size: ${beforeCount} → ${afterCount} items\n`;
+      
+      // Show batch method for multiple items
+      if (item_keys.length > 1) {
+        const methodDescription = {
+          'sequential-reliable': 'sequential individual adds (only reliable method for multiple items)'
+        };
+        resultText += `• Method used: ${methodDescription[batchMethod] || batchMethod}\n`;
+        
+        // Show success summary for sequential operations
+        if (response.data?.sequentialAdded !== undefined) {
+          const successRate = ((response.data.sequentialAdded / item_keys.length) * 100).toFixed(0);
+          resultText += `• Success rate: ${response.data.sequentialAdded}/${item_keys.length} items (${successRate}%)\n`;
+        }
+        
+        // Show individual results in debug mode
+        if (response.data?.sequentialResults && process.env.DEBUG_PLAYLISTS) {
+          resultText += `• Individual results:\n`;
+          response.data.sequentialResults.forEach(result => {
+            const status = result.success ? '✅' : '❌';
+            const detail = result.error ? ` (${result.error})` : result.status ? ` (HTTP ${result.status})` : '';
+            resultText += `  ${status} ${result.itemKey}${detail}\n`;
+          });
+        }
+      }
+      
+      // Debug information
+      if (process.env.DEBUG_PLAYLISTS) {
+        resultText += `\nDEBUG INFO:\n`;
+        resultText += `• Batch method used: ${batchMethod}\n`;
+        resultText += `• PUT request status: ${response.status}\n`;
+        resultText += `• PUT successful: ${putSuccessful}\n`;
+        resultText += `• Before count: ${beforeCount}\n`;
+        resultText += `• After count: ${afterCount}\n`;
+        resultText += `• Retries needed: ${retryCount}\n`;
+        resultText += `• Count verification method: ${retryCount > maxRetries ? 'fallback' : 'API'}\n`;
+        resultText += `• Items requested: [${item_keys.join(', ')}]\n`;
+        if (response.data?.sequentialAdded !== undefined) {
+          resultText += `• Sequential adds successful: ${response.data.sequentialAdded}/${item_keys.length}\n`;
+        }
+      }
       
       // If HTTP request was successful but count didn't change, 
       // it's likely the items already exist or are duplicates
@@ -2190,7 +2598,7 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
     }
     
     try {
-      const plexUrl = process.env.PLEX_URL || 'http://localhost:32400';
+      const plexUrl = process.env.PLEX_URL || 'https://app.plex.tv';
       const plexToken = await this.authManager.getAuthToken();
 
       // Get playlist info before removing items
@@ -2370,7 +2778,7 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
     const { playlist_id } = args;
     
     try {
-      const plexUrl = process.env.PLEX_URL || 'http://localhost:32400';
+      const plexUrl = process.env.PLEX_URL || 'https://app.plex.tv';
       const plexToken = await this.authManager.getAuthToken();
 
       const deleteUrl = `${plexUrl}/playlists/${playlist_id}`;
@@ -2410,7 +2818,7 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
     const { item_keys, account_id } = args;
     
     try {
-      const plexUrl = process.env.PLEX_URL || 'http://localhost:32400';
+      const plexUrl = process.env.PLEX_URL || 'https://app.plex.tv';
       const plexToken = await this.authManager.getAuthToken();
 
       const statusResults = [];
@@ -2627,7 +3035,7 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
           let height = 0;
           
           if (media.height) {
-            height = parseInt(media.height);
+            height = parseInt(media.height, 10) || 0;
           } else if (media.videoResolution) {
             // Convert videoResolution string to height for comparison
             switch (media.videoResolution) {
@@ -2712,7 +3120,7 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
         const totalSize = item.Media.reduce((total, media) => {
           if (media.Part) {
             return total + media.Part.reduce((partTotal, part) => {
-              return partTotal + (part.size ? parseInt(part.size) / (1024 * 1024) : 0); // Convert to MB
+              return partTotal + (part.size ? (parseInt(part.size, 10) || 0) / (1024 * 1024) : 0); // Convert to MB
             }, 0);
           }
           return total;
@@ -2853,7 +3261,7 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
     const { library_id } = args;
     
     try {
-      const plexUrl = process.env.PLEX_URL || 'http://localhost:32400';
+      const plexUrl = process.env.PLEX_URL || 'https://app.plex.tv';
       const plexToken = await this.authManager.getAuthToken();
 
       let collectionsUrl;
@@ -2903,7 +3311,7 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
     const { collection_id, sort = "titleSort", limit = 20, offset = 0 } = args;
     
     try {
-      const plexUrl = process.env.PLEX_URL || 'http://localhost:32400';
+      const plexUrl = process.env.PLEX_URL || 'https://app.plex.tv';
       const plexToken = await this.authManager.getAuthToken();
 
       const collectionUrl = `${plexUrl}/library/collections/${collection_id}/children`;
@@ -3002,7 +3410,7 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
     const { item_key } = args;
     
     try {
-      const plexUrl = process.env.PLEX_URL || 'http://localhost:32400';
+      const plexUrl = process.env.PLEX_URL || 'https://app.plex.tv';
       const plexToken = await this.authManager.getAuthToken();
 
       const mediaUrl = `${plexUrl}/library/metadata/${item_key}`;
@@ -3221,7 +3629,7 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
             }
             
             if (part.size) {
-              const sizeMB = Math.round(parseInt(part.size) / (1024 * 1024));
+              const sizeMB = Math.round((parseInt(part.size, 10) || 0) / (1024 * 1024));
               const sizeGB = (sizeMB / 1024).toFixed(2);
               if (sizeMB > 1024) {
                 formatted += `\\n     File Size: ${sizeGB} GB`;
@@ -3291,7 +3699,7 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
     const { library_id, include_details = false } = args;
     
     try {
-      const plexUrl = process.env.PLEX_URL || 'http://localhost:32400';
+      const plexUrl = process.env.PLEX_URL || 'https://app.plex.tv';
       const plexToken = await this.authManager.getAuthToken();
 
       // Get library information first
@@ -3437,7 +3845,7 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
                   if (media.Part) {
                     for (const part of media.Part) {
                       if (part.size) {
-                        const sizeBytes = parseInt(part.size);
+                        const sizeBytes = parseInt(part.size, 10) || 0;
                         libraryStats.totalSize += sizeBytes;
                         
                         if (includeDetails) {
@@ -3642,7 +4050,7 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
     } = args;
     
     try {
-      const plexUrl = process.env.PLEX_URL || 'http://localhost:32400';
+      const plexUrl = process.env.PLEX_URL || 'https://app.plex.tv';
       const plexToken = await this.authManager.getAuthToken();
 
       // Auto-detect music libraries if not specified
