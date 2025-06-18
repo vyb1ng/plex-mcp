@@ -1,11 +1,11 @@
 # Smithery configuration file: https://smithery.ai/docs/build/project-config
 
 startCommand:
-  type: stdio
+  type: http
   commandFunction:
-    # A JS function that produces the CLI command based on the given config to start the MCP on stdio.
+    # A JS function that produces the CLI command based on the given config to start the MCP as HTTP/SSE server.
     |-
-    (config) => ({command: 'node', args: ['index.js'], env: {PLEX_URL: config.plexUrl, PLEX_TOKEN: config.plexToken, PLEX_VERIFY_SSL: config.plexVerifySsl.toString()}})
+    (config) => ({command: 'node', args: ['index.js'], env: {PLEX_URL: config.plexUrl, PLEX_TOKEN: config.plexToken, PLEX_VERIFY_SSL: config.plexVerifySsl.toString(), MCP_TRANSPORT: 'sse', MCP_TRANSPORT_PORT: '3000'}})
   configSchema:
     # JSON Schema defining the configuration options for the MCP.
     type: object
