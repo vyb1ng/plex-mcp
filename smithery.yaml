@@ -1,0 +1,29 @@
+# Smithery configuration file: https://smithery.ai/docs/build/project-config
+
+startCommand:
+  type: stdio
+  commandFunction:
+    # A JS function that produces the CLI command based on the given config to start the MCP on stdio.
+    |-
+    (config) => ({command: 'node', args: ['index.js'], env: {PLEX_URL: config.plexUrl, PLEX_TOKEN: config.plexToken, PLEX_VERIFY_SSL: config.plexVerifySsl.toString()}})
+  configSchema:
+    # JSON Schema defining the configuration options for the MCP.
+    type: object
+    required:
+      - plexUrl
+      - plexToken
+    properties:
+      plexUrl:
+        type: string
+        description: URL of the Plex server
+      plexToken:
+        type: string
+        description: Plex authentication token
+      plexVerifySsl:
+        type: boolean
+        default: true
+        description: Whether to verify Plex server SSL certificate
+  exampleConfig:
+    plexUrl: http://your-plex-server:32400
+    plexToken: abcdef123456
+    plexVerifySsl: true
