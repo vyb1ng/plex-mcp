@@ -1,4 +1,5 @@
 # Plex MCP Server
+[![smithery badge](https://smithery.ai/badge/@vyb1ng/plex-mcp)](https://smithery.ai/server/@vyb1ng/plex-mcp)
 
 A Model Context Protocol (MCP) server for searching Plex media libraries using Claude.
 
@@ -12,6 +13,14 @@ A Model Context Protocol (MCP) server for searching Plex media libraries using C
 - Support for both static tokens and interactive authentication
 
 ## Setup
+
+### Installing via Smithery
+
+To install plex-mcp for Claude Desktop automatically via [Smithery](https://smithery.ai/server/@vyb1ng/plex-mcp):
+
+```bash
+npx -y @smithery/cli install @vyb1ng/plex-mcp --client claude
+```
 
 1. Install dependencies:
    ```bash
