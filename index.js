@@ -2,6 +2,8 @@
 
 const { Server } = require("@modelcontextprotocol/sdk/server/index.js");
 const { StdioServerTransport } = require("@modelcontextprotocol/sdk/server/stdio.js");
+const { SSEServerTransport } = require("@modelcontextprotocol/sdk/server/sse.js");
+const express = require('express');
 const {
   CallToolRequestSchema,
   ListToolsRequestSchema,
@@ -4476,11 +4478,108 @@ The smart playlist has been created and is now available in your Plex library!`,
     await this.server.connect(transport);
     console.error("Plex MCP server running on stdio");
   }
+
+  async runSSE(port = 3000) {
+    const app = express();
+    app.use(express.json());
+    
+    // Store transports by session ID
+    const transports = {};
+    
+    // SSE endpoint for establishing the stream
+    app.get('/mcp', async (req, res) => {
+      console.error('Received GET request to /mcp (establishing SSE stream)');
+      try {
+        // Create a new SSE transport for the client
+        const transport = new SSEServerTransport('/messages', res);
+        
+        // Store the transport by session ID
+        const sessionId = transport.sessionId;
+        transports[sessionId] = transport;
+        
+        // Set up onclose handler to clean up transport when closed
+        transport.onclose = () => {
+          console.error(`SSE transport closed for session ${sessionId}`);
+          delete transports[sessionId];
+        };
+        
+        // Connect the transport to the MCP server
+        await this.server.connect(transport);
+        console.error(`Established SSE stream with session ID: ${sessionId}`);
+      } catch (error) {
+        console.error('Error establishing SSE stream:', error);
+        if (!res.headersSent) {
+          res.status(500).send('Error establishing SSE stream');
+        }
+      }
+    });
+    
+    // Messages endpoint for receiving client JSON-RPC requests
+    app.post('/messages', async (req, res) => {
+      console.error('Received POST request to /messages');
+      
+      // Extract session ID from URL query parameter
+      const sessionId = req.query.sessionId;
+      if (!sessionId) {
+        console.error('No session ID provided in request URL');
+        res.status(400).send('Missing sessionId parameter');
+        return;
+      }
+      
+      const transport = transports[sessionId];
+      if (!transport) {
+        console.error(`No active transport found for session ID: ${sessionId}`);
+        res.status(404).send('Session not found');
+        return;
+      }
+      
+      try {
+        // Handle the POST message with the transport
+        await transport.handlePostMessage(req, res, req.body);
+      } catch (error) {
+        console.error('Error handling request:', error);
+        if (!res.headersSent) {
+          res.status(500).send('Error handling request');
+        }
+      }
+    });
+    
+    // Start the server
+    app.listen(port, () => {
+      console.error(`Plex MCP SSE server listening on port ${port}`);
+    });
+    
+    // Handle server shutdown
+    process.on('SIGINT', async () => {
+      console.error('Shutting down SSE server...');
+      // Close all active transports
+      for (const sessionId in transports) {
+        try {
+          console.error(`Closing transport for session ${sessionId}`);
+          await transports[sessionId].close();
+          delete transports[sessionId];
+        } catch (error) {
+          console.error(`Error closing transport for session ${sessionId}:`, error);
+        }
+      }
+      console.error('SSE server shutdown complete');
+      process.exit(0);
+    });
+  }
 }
 
 if (require.main === module) {
   const server = new PlexMCPServer();
-  server.run().catch(console.error);
+  
+  // Check if we should run in SSE mode
+  const runMode = process.env.MCP_TRANSPORT || 'stdio';
+  const port = process.env.MCP_TRANSPORT_PORT || process.env.PORT || 3000;
+  
+  if (runMode === 'sse') {
+    server.runSSE(port).catch(console.error);
+  } else {
+    server.run().catch(console.error);
+  }
 }
 
 module.exports = PlexMCPServer;

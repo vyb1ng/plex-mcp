@@ -42,6 +42,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.3",
     "axios": "^1.10.0",
+    "express": "^5.1.0",
     "plex-oauth": "^2.1.0"
   },
   "devDependencies": {
