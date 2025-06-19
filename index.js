@@ -5,6 +5,10 @@ const { StdioServerTransport } = require("@modelcontextprotocol/sdk/server/stdio
 const {
   CallToolRequestSchema,
   ListToolsRequestSchema,
+  ListResourcesRequestSchema,
+  ReadResourceRequestSchema,
+  ListPromptsRequestSchema,
+  GetPromptRequestSchema,
 } = require("@modelcontextprotocol/sdk/types.js");
 const axios = require('axios');
 const { PlexOauth } = require('plex-oauth');
@@ -169,6 +173,8 @@ class PlexMCPServer {
     this.authManager = new PlexAuthManager();
     this.connectionVerified = false;
     this.setupToolHandlers();
+    this.setupResourceHandlers();
+    this.setupPromptHandlers();
   }
 
   async verifyConnection() {
@@ -5358,86 +5364,527 @@ The smart playlist has been created and is now available in your Plex library!`,
     return formatted;
   }
 
-  async run() {
-    // Check if SSE mode is explicitly requested
-    if (process.env.MCP_TRANSPORT === 'sse' || process.argv.includes('--sse')) {
-      return this.runSSE();
+  setupResourceHandlers() {
+    // List available resources
+    this.server.setRequestHandler(ListResourcesRequestSchema, async () => {
+      const resources = [];
+
+      try {
+        // Only provide resources if we can authenticate
+        const plexToken = await this.authManager.getAuthToken();
+        if (!plexToken) {
+          return { resources: [] };
+        }
+
+        const plexUrl = process.env.PLEX_URL || 'https://app.plex.tv';
+
+        // Get libraries to create dynamic resources
+        const librariesUrl = `${plexUrl}/library/sections`;
+        const response = await axiosWithLogging.get(librariesUrl, { 
+          params: { 'X-Plex-Token': plexToken },
+          httpsAgent: this.getHttpsAgent(),
+          timeout: 10000
+        });
+
+        if (response.data?.MediaContainer?.Directory) {
+          for (const library of response.data.MediaContainer.Directory) {
+            resources.push({
+              uri: `plex://library/${library.key}`,
+              name: `${library.title} Library`,
+              description: `Access all content in the ${library.title} library (${library.type})`,
+              mimeType: "application/json"
+            });
+
+            // Add recently added for each library
+            resources.push({
+              uri: `plex://library/${library.key}/recent`,
+              name: `${library.title} - Recently Added`,
+              description: `Recently added content from ${library.title} library`,
+              mimeType: "application/json"
+            });
+          }
+        }
+
+        // Add global resources
+        resources.push(
+          {
+            uri: "plex://libraries",
+            name: "All Libraries",
+            description: "List of all Plex libraries with their metadata",
+            mimeType: "application/json"
+          },
+          {
+            uri: "plex://recent",
+            name: "Recently Added Content",
+            description: "Recently added content across all libraries",
+            mimeType: "application/json"
+          },
+          {
+            uri: "plex://playlists",
+            name: "All Playlists",
+            description: "List of all playlists on the server",
+            mimeType: "application/json"
+          },
+          {
+            uri: "plex://on-deck",
+            name: "Continue Watching",
+            description: "Content that's currently being watched (on deck)",
+            mimeType: "application/json"
+          },
+          {
+            uri: "plex://stats",
+            name: "Server Statistics",
+            description: "Library statistics and storage information",
+            mimeType: "application/json"
+          }
+        );
+
+      } catch (error) {
+        console.error('Error listing resources:', error.message);
+        // Return basic resources even if we can't connect
+        resources.push({
+          uri: "plex://status",
+          name: "Connection Status",
+          description: "Current Plex server connection status",
+          mimeType: "application/json"
+        });
+      }
+
+      return { resources };
+    });
+
+    // Read specific resources
+    this.server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+      const { uri } = request.params;
+      
+      try {
+        const plexToken = await this.authManager.getAuthToken();
+        const plexUrl = process.env.PLEX_URL || 'https://app.plex.tv';
+
+        if (uri === "plex://status") {
+          const status = await this.verifyConnection();
+          return {
+            contents: [{
+              uri,
+              mimeType: "application/json",
+              text: JSON.stringify(status, null, 2)
+            }]
+          };
+        }
+
+        if (!plexToken) {
+          throw new Error('Authentication required to access this resource');
+        }
+
+        if (uri === "plex://libraries") {
+          const response = await axiosWithLogging.get(`${plexUrl}/library/sections`, { 
+            params: { 'X-Plex-Token': plexToken },
+            httpsAgent: this.getHttpsAgent(),
+            timeout: 10000
+          });
+          return {
+            contents: [{
+              uri,
+              mimeType: "application/json",
+              text: JSON.stringify(response.data?.MediaContainer, null, 2)
+            }]
+          };
+        }
+
+        if (uri === "plex://recent") {
+          const response = await axiosWithLogging.get(`${plexUrl}/library/recentlyAdded`, { 
+            params: { 'X-Plex-Token': plexToken },
+            httpsAgent: this.getHttpsAgent(),
+            timeout: 15000
+          });
+          return {
+            contents: [{
+              uri,
+              mimeType: "application/json",
+              text: JSON.stringify(response.data?.MediaContainer, null, 2)
+            }]
+          };
+        }
+
+        if (uri === "plex://playlists") {
+          const response = await axiosWithLogging.get(`${plexUrl}/playlists`, { 
+            params: { 'X-Plex-Token': plexToken },
+            httpsAgent: this.getHttpsAgent(),
+            timeout: 10000
+          });
+          return {
+            contents: [{
+              uri,
+              mimeType: "application/json", 
+              text: JSON.stringify(response.data?.MediaContainer, null, 2)
+            }]
+          };
+        }
+
+        if (uri === "plex://on-deck") {
+          const response = await axiosWithLogging.get(`${plexUrl}/library/onDeck`, { 
+            params: { 'X-Plex-Token': plexToken },
+            httpsAgent: this.getHttpsAgent(),
+            timeout: 10000
+          });
+          return {
+            contents: [{
+              uri,
+              mimeType: "application/json",
+              text: JSON.stringify(response.data?.MediaContainer, null, 2)
+            }]
+          };
+        }
+
+        if (uri === "plex://stats") {
+          const stats = await this.getLibraryStatsInternal(plexToken, plexUrl);
+          return {
+            contents: [{
+              uri,
+              mimeType: "application/json",
+              text: JSON.stringify(stats, null, 2)
+            }]
+          };
+        }
+
+        // Handle library-specific resources: plex://library/{id} or plex://library/{id}/recent
+        const libraryMatch = uri.match(/^plex:\/\/library\/(\d+)(\/recent)?$/);
+        if (libraryMatch) {
+          const libraryId = libraryMatch[1];
+          const isRecent = !!libraryMatch[2];
+          
+          let endpoint;
+          if (isRecent) {
+            endpoint = `${plexUrl}/library/sections/${libraryId}/recentlyAdded`;
+          } else {
+            endpoint = `${plexUrl}/library/sections/${libraryId}/all`;
+          }
+          
+          const response = await axiosWithLogging.get(endpoint, { 
+            params: { 'X-Plex-Token': plexToken },
+            httpsAgent: this.getHttpsAgent(),
+            timeout: 15000
+          });
+          
+          return {
+            contents: [{
+              uri,
+              mimeType: "application/json",
+              text: JSON.stringify(response.data?.MediaContainer, null, 2)
+            }]
+          };
+        }
+
+        throw new Error(`Unknown resource URI: ${uri}`);
+
+      } catch (error) {
+        console.error(`Error reading resource ${uri}:`, error.message);
+        return {
+          contents: [{
+            uri,
+            mimeType: "application/json",
+            text: JSON.stringify({ error: error.message }, null, 2)
+          }]
+        };
+      }
+    });
+  }
+
+  setupPromptHandlers() {
+    // List available prompts
+    this.server.setRequestHandler(ListPromptsRequestSchema, async () => {
+      return {
+        prompts: [
+          {
+            name: "playlist_description",
+            description: "Generate a creative description for a playlist",
+            arguments: [
+              {
+                name: "playlist_name",
+                description: "Name of the playlist",
+                required: true
+              },
+              {
+                name: "genre",
+                description: "Primary genre or mood of the playlist",
+                required: false
+              },
+              {
+                name: "content_info",
+                description: "Information about the content in the playlist",
+                required: false
+              }
+            ]
+          },
+          {
+            name: "content_recommendation",
+            description: "Generate content recommendations based on viewing history or preferences",
+            arguments: [
+              {
+                name: "liked_content",
+                description: "Titles of content the user has enjoyed",
+                required: true
+              },
+              {
+                name: "content_type",
+                description: "Type of content to recommend (movies, tv shows, music, etc.)",
+                required: false
+              },
+              {
+                name: "mood_or_genre",
+                description: "Specific mood or genre preferences",
+                required: false
+              }
+            ]
+          },
+          {
+            name: "smart_playlist_rules",
+            description: "Generate smart playlist criteria and rules",
+            arguments: [
+              {
+                name: "intent",
+                description: "What kind of smart playlist you want to create",
+                required: true
+              },
+              {
+                name: "library_type",
+                description: "Type of library (music, movies, tv shows)",
+                required: false
+              }
+            ]
+          },
+          {
+            name: "media_analysis",
+            description: "Analyze and categorize media content",
+            arguments: [
+              {
+                name: "content_data",
+                description: "JSON data about the media content",
+                required: true
+              },
+              {
+                name: "analysis_type",
+                description: "Type of analysis (genre patterns, viewing trends, collection gaps, etc.)",
+                required: false
+              }
+            ]
+          },
+          {
+            name: "server_troubleshooting",
+            description: "Help diagnose Plex server connection or performance issues",
+            arguments: [
+              {
+                name: "error_details",
+                description: "Details about the error or issue encountered",
+                required: true
+              },
+              {
+                name: "server_info",
+                description: "Information about the server setup and configuration",
+                required: false
+              }
+            ]
+          }
+        ]
+      };
+    });
+
+    // Get specific prompt
+    this.server.setRequestHandler(GetPromptRequestSchema, async (request) => {
+      const { name, arguments: args } = request.params;
+
+      switch (name) {
+        case "playlist_description":
+          const playlistName = args?.playlist_name || "Your Playlist";
+          const genre = args?.genre || "";
+          const contentInfo = args?.content_info || "";
+          
+          return {
+            description: `Generate a creative and engaging description for the playlist "${playlistName}"`,
+            messages: [
+              {
+                role: "user",
+                content: {
+                  type: "text",
+                  text: `Create a creative, engaging description for a playlist called "${playlistName}"${genre ? ` in the ${genre} genre` : ""}${contentInfo ? `.\n\nPlaylist content information:\n${contentInfo}` : ""}.
+
+The description should:
+- Be 2-3 sentences long
+- Capture the mood and vibe of the playlist
+- Be engaging and make people want to listen/watch
+- Use vivid, descriptive language
+${genre ? `- Reflect the ${genre} genre characteristics` : ""}
+
+Make it sound compelling and professional, like something you'd see on a streaming service.`
+                }
+              }
+            ]
+          };
+
+        case "content_recommendation":
+          const likedContent = args?.liked_content || "";
+          const contentType = args?.content_type || "content";
+          const moodOrGenre = args?.mood_or_genre || "";
+
+          return {
+            description: `Generate personalized content recommendations`,
+            messages: [
+              {
+                role: "user",
+                content: {
+                  type: "text",
+                  text: `Based on these titles I've enjoyed: ${likedContent}
+
+Please recommend similar ${contentType}${moodOrGenre ? ` in the ${moodOrGenre} style` : ""}.
+
+For each recommendation, provide:
+- Title and year
+- Brief explanation of why it's similar to what I liked
+- What makes it appealing
+- Any notable cast, creators, or standout features
+
+Focus on finding hidden gems and quality content that matches my taste preferences shown in the titles I mentioned.`
+                }
+              }
+            ]
+          };
+
+        case "smart_playlist_rules":
+          const intent = args?.intent || "";
+          const libraryType = args?.library_type || "media";
+
+          return {
+            description: `Generate smart playlist criteria and filtering rules`,
+            messages: [
+              {
+                role: "user",
+                content: {
+                  type: "text",
+                  text: `I want to create a smart playlist for: ${intent}
+
+Library type: ${libraryType}
+
+Please suggest specific filtering criteria and rules that would work well for this playlist, including:
+- Recommended filters (genre, year, rating, etc.)
+- Sorting preferences
+- Any advanced criteria that would enhance the playlist
+- Tips for keeping the playlist fresh and relevant
+
+Provide practical, actionable suggestions that would create a great automated playlist.`
+                }
+              }
+            ]
+          };
+
+        case "media_analysis":
+          const contentData = args?.content_data || "";
+          const analysisType = args?.analysis_type || "general analysis";
+
+          return {
+            description: `Analyze media library content and patterns`,
+            messages: [
+              {
+                role: "user",
+                content: {
+                  type: "text",
+                  text: `Please analyze this media library data for ${analysisType}:
+
+${contentData}
+
+Provide insights about:
+- Patterns and trends in the collection
+- Genre distribution and preferences
+- Quality and completeness of the library
+- Recommendations for improvement or expansion
+- Any interesting observations about the content
+
+Format the analysis in a clear, organized way that's easy to understand and actionable.`
+                }
+              }
+            ]
+          };
+
+        case "server_troubleshooting":
+          const errorDetails = args?.error_details || "";
+          const serverInfo = args?.server_info || "";
+
+          return {
+            description: `Help diagnose and resolve Plex server issues`,
+            messages: [
+              {
+                role: "user",
+                content: {
+                  type: "text",
+                  text: `I'm having an issue with my Plex server. Here are the details:
+
+Error/Issue: ${errorDetails}
+
+${serverInfo ? `Server Information:\n${serverInfo}\n` : ""}
+
+Please help me:
+1. Understand what might be causing this issue
+2. Provide step-by-step troubleshooting steps
+3. Suggest preventive measures for the future
+4. Identify if this is a common issue with known solutions
+
+Focus on practical, actionable solutions that don't require advanced technical expertise.`
+                }
+              }
+            ]
+          };
+
+        default:
+          throw new Error(`Unknown prompt: ${name}`);
+      }
+    });
+  }
+
+  async getLibraryStatsInternal(plexToken, plexUrl) {
+    try {
+      const response = await axiosWithLogging.get(`${plexUrl}/library/sections`, { 
+        params: { 'X-Plex-Token': plexToken },
+        httpsAgent: this.getHttpsAgent(),
+        timeout: 10000
+      });
+
+      const libraries = response.data?.MediaContainer?.Directory || [];
+      const stats = {
+        totalLibraries: libraries.length,
+        libraries: []
+      };
+
+      for (const library of libraries) {
+        const libResponse = await axiosWithLogging.get(`${plexUrl}/library/sections/${library.key}/all`, { 
+          params: { 'X-Plex-Token': plexToken },
+          httpsAgent: this.getHttpsAgent(),
+          timeout: 15000
+        });
+
+        const libStats = {
+          name: library.title,
+          type: library.type,
+          itemCount: libResponse.data?.MediaContainer?.size || 0,
+          agent: library.agent,
+          scanner: library.scanner,
+          language: library.language,
+          refreshing: library.refreshing || false,
+          createdAt: library.createdAt,
+          updatedAt: library.updatedAt
+        };
+
+        stats.libraries.push(libStats);
+      }
+
+      return stats;
+    } catch (error) {
+      return { error: `Failed to get library stats: ${error.message}` };
     }
-    
-    // Default to stdio transport
+  }
+
+  async run() {
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
     console.error("Plex MCP server running on stdio");
-  }
-
-  async runSSE() {
-    const express = require('express');
-    const cors = require('cors');
-    const { SSEServerTransport } = require("@modelcontextprotocol/sdk/server/sse.js");
-    
-    const app = express();
-    
-    // Enable CORS for all routes
-    app.use(cors({
-      origin: '*',
-      methods: ['GET', 'POST', 'OPTIONS'],
-      allowedHeaders: ['Content-Type', 'Authorization', 'Cache-Control'],
-      credentials: false
-    }));
-
-    // Health check endpoint
-    app.get('/health', (req, res) => {
-      res.json({ status: 'ok', service: 'plex-mcp-sse-server' });
-    });
-
-    // SSE endpoint for MCP communication - let transport handle headers
-    app.get('/sse', async (req, res) => {
-      try {
-        console.error('SSE connection request received');
-        
-        // Create SSE transport - it will handle all headers and setup
-        const transport = new SSEServerTransport('/sse', res);
-        
-        console.error('Connecting MCP server to SSE transport');
-        await this.server.connect(transport);
-        console.error('SSE transport connected successfully');
-        
-        // Handle client disconnect
-        req.on('close', () => {
-          console.error('SSE connection closed');
-        });
-
-      } catch (error) {
-        console.error('Error in SSE endpoint:', error);
-        if (!res.headersSent) {
-          res.status(500).json({ error: 'Internal server error', details: error.message });
-        }
-      }
-    });
-
-    // Info endpoint to show server details
-    app.get('/', (req, res) => {
-      res.json({
-        name: 'Plex MCP SSE Server',
-        version: '0.4.0',
-        endpoints: {
-          sse: '/sse',
-          health: '/health'
-        },
-        mcp: {
-          transport: 'sse',
-          protocol_version: '2024-11-05'
-        }
-      });
-    });
-
-    // Start the HTTP server
-    const port = process.env.PORT || 3000;
-    app.listen(port, '0.0.0.0', () => {
-      console.error(`Plex MCP SSE server running on http://0.0.0.0:${port}`);
-      console.error(`SSE endpoint: http://0.0.0.0:${port}/sse`);
-      console.error(`Health check: http://0.0.0.0:${port}/health`);
-    });
   }
 }
 
