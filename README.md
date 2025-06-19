@@ -40,6 +40,34 @@ Add to your Claude Desktop MCP settings:
 
 **Note:** Replace `your-plex-server:32400` with your actual Plex server address and port.
 
+## HTTP Debug Logging
+
+For troubleshooting connection issues, you can enable comprehensive HTTP request/response logging:
+
+```json
+{
+  "mcpServers": {
+    "plex": {
+      "command": "npx",
+      "args": ["plex-mcp"],
+      "env": {
+        "PLEX_URL": "http://your-plex-server:32400",
+        "MCP_HTTP_DEBUG": "true"
+      }
+    }
+  }
+}
+```
+
+When `MCP_HTTP_DEBUG=true`, the server will log:
+- **Request Details**: Method, URL, headers, parameters, timing
+- **Response Details**: Status codes, headers, response size, duration
+- **Error Diagnostics**: Connection details, TLS/SSL certificate info, troubleshooting suggestions
+- **Performance Metrics**: DNS lookup, TCP connection, TLS handshake timing
+- **Security**: All sensitive headers (tokens, auth) are automatically redacted
+
+All logs are structured JSON with correlation IDs for request/response tracking.
+
 ## What You Can Do
 
 **Search & Browse**
@@ -63,9 +91,22 @@ Add to your Claude Desktop MCP settings:
 - Check watch status and progress
 - View library statistics and listening stats
 
+**Resources (Data Access)**
+- Access structured data via URI: `plex://libraries`, `plex://recent`, `plex://playlists`
+- Library-specific data: `plex://library/{id}`, `plex://library/{id}/recent`
+- Server statistics and connection status
+- JSON-formatted data for analysis and automation
+
+**Prompts (AI Assistance)**
+- **playlist_description**: Generate creative playlist descriptions
+- **content_recommendation**: Get personalized content recommendations
+- **smart_playlist_rules**: Create smart playlist criteria and rules
+- **media_analysis**: Analyze library content and patterns
+- **server_troubleshooting**: Diagnose server connection issues
+
 ## Status
 
-**✅ Working:** Search, browse, playlists, media info, library stats, watch history, collections, music discovery
+**✅ Working:** Search, browse, playlists, media info, library stats, watch history, collections, music discovery, resources, prompts
 
 **❌ Disabled:** Smart playlists (filter logic broken)
 

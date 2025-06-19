@@ -14,10 +14,12 @@ const {
 describe('Handler Integration Tests', () => {
   let server;
   let mockAxios;
+  let axiosInstance;
 
   beforeEach(() => {
-    server = new PlexMCPServer();
-    mockAxios = new MockAdapter(axios);
+    axiosInstance = axios.create();
+    mockAxios = new MockAdapter(axiosInstance);
+    server = new PlexMCPServer({ axios: axiosInstance });
   });
 
   afterEach(() => {
@@ -70,7 +72,7 @@ describe('Handler Integration Tests', () => {
       });
 
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain('Error searching Plex');
+      expect(result.content[0].text).toContain('Connection Failed');
 
       process.env.PLEX_TOKEN = originalToken;
     });
@@ -83,7 +85,7 @@ describe('Handler Integration Tests', () => {
       });
 
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain('Error searching Plex');
+      expect(result.content[0].text).toContain('Authentication Required');
     });
   });
 
@@ -105,7 +107,7 @@ describe('Handler Integration Tests', () => {
       const result = await server.handleBrowseLibraries({});
 
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain('Error browsing libraries');
+      expect(result.content[0].text).toContain('Connection Failed');
     });
   });
 
@@ -740,7 +742,7 @@ describe('Handler Integration Tests', () => {
       });
 
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain('Error searching Plex');
+      expect(result.content[0].text).toContain('Connection Failed');
     });
 
     it('should handle connection refused', async () => {
@@ -749,7 +751,7 @@ describe('Handler Integration Tests', () => {
       const result = await server.handleBrowseLibraries({});
 
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain('Error browsing libraries');
+      expect(result.content[0].text).toContain('Connection Failed');
     });
   });
 });

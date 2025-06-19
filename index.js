@@ -5,12 +5,26 @@ const { StdioServerTransport } = require("@modelcontextprotocol/sdk/server/stdio
 const {
   CallToolRequestSchema,
   ListToolsRequestSchema,
+  ListResourcesRequestSchema,
+  ReadResourceRequestSchema,
+  ListPromptsRequestSchema,
+  GetPromptRequestSchema,
 } = require("@modelcontextprotocol/sdk/types.js");
 const axios = require('axios');
 const { PlexOauth } = require('plex-oauth');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { HttpLogger } = require('./http-logger');
+
+// Initialize HTTP logger with Plex MCP specific configuration
+const httpLogger = new HttpLogger({
+  serviceName: 'plex-mcp',
+  debug: process.env.MCP_HTTP_DEBUG === 'true'
+});
+
+// Create axios instance with logging
+const axiosWithLogging = httpLogger.createAxiosInstance();
 
 class PlexAuthManager {
   constructor() {
@@ -143,7 +157,7 @@ class PlexAuthManager {
 }
 
 class PlexMCPServer {
-  constructor() {
+  constructor(options = {}) {
     this.server = new Server(
       {
         name: "plex-search-server",
@@ -152,19 +166,139 @@ class PlexMCPServer {
       {
         capabilities: {
           tools: {},
+          resources: {},
+          prompts: {},
         },
       }
     );
 
     this.authManager = new PlexAuthManager();
+    this.connectionVerified = false;
+    // Allow dependency injection for testing
+    this.axios = options.axios || this.axios;
     this.setupToolHandlers();
+    this.setupResourceHandlers();
+    this.setupPromptHandlers();
+  }
+
+  async verifyConnection() {
+    try {
+      const plexUrl = process.env.PLEX_URL || 'https://app.plex.tv';
+      const plexToken = await this.authManager.getAuthToken();
+
+      if (!plexToken) {
+        return {
+          verified: false,
+          error: 'No authentication token available. Please authenticate first.',
+          needsAuth: true
+        };
+      }
+
+      // Test basic connectivity with identity endpoint
+      const identityUrl = `${plexUrl}/identity`;
+      const response = await this.axios.get(identityUrl, {
+        params: { 'X-Plex-Token': plexToken },
+        httpsAgent: this.getHttpsAgent(),
+        timeout: 10000
+      });
+
+      if (response.status === 200) {
+        this.connectionVerified = true;
+        return {
+          verified: true,
+          server: response.data?.MediaContainer?.machineIdentifier || 'Unknown',
+          url: plexUrl
+        };
+      }
+
+      return {
+        verified: false,
+        error: `Server responded with status ${response.status}`,
+        needsAuth: false
+      };
+
+    } catch (error) {
+      let errorMessage = error.message;
+      let needsAuth = false;
+
+      if (error.response?.status === 401) {
+        errorMessage = 'Authentication failed. Token may be expired.';
+        needsAuth = true;
+      } else if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND' || error.code === 'ETIMEDOUT') {
+        errorMessage = `Cannot connect to Plex server at ${process.env.PLEX_URL || 'https://app.plex.tv'}. Check network connectivity and server URL.`;
+      }
+
+      return {
+        verified: false,
+        error: errorMessage,
+        needsAuth: needsAuth
+      };
+    }
+  }
+
+  async ensureConnection() {
+    if (this.connectionVerified) {
+      return { success: true };
+    }
+
+    const verification = await this.verifyConnection();
+    
+    if (!verification.verified) {
+      const errorContent = verification.needsAuth 
+        ? `🔑 **Authentication Required**
+
+${verification.error}
+
+Please run \`check_auth_status\` and follow the authentication process.`
+        : `❌ **Connection Failed**
+
+${verification.error}
+
+**Troubleshooting:**
+- Verify PLEX_URL is correct and accessible
+- Check if server is running and reachable
+- Ensure network connectivity`;
+
+      return {
+        success: false,
+        response: {
+          content: [
+            {
+              type: "text",
+              text: errorContent,
+            },
+          ],
+          isError: true,
+        }
+      };
+    }
+
+    return { success: true };
   }
 
   getHttpsAgent() {
     const verifySSL = process.env.PLEX_VERIFY_SSL !== 'false';
-    return new (require('https').Agent)({
+    const https = require('https');
+    
+    return new https.Agent({
       rejectUnauthorized: verifySSL,
-      minVersion: 'TLSv1.2'
+      minVersion: 'TLSv1.2',
+      checkServerIdentity: (hostname, cert) => {
+        // Always trust publicly verifiable certificates for *.*.plex.direct domains
+        if (hostname.match(/^[^.]+\.[^.]+\.plex\.direct$/)) {
+          // Let Node.js perform standard certificate verification
+          // This allows publicly trusted certificates to work
+          return undefined;
+        }
+        
+        // For non-plex.direct domains, use default behavior
+        if (verifySSL) {
+          return https.globalAgent.options.checkServerIdentity(hostname, cert);
+        }
+        
+        // If SSL verification is disabled, skip all checks
+        return undefined;
+      }
     });
   }
 
@@ -1126,6 +1260,7 @@ ${loginUrl.replace(/\[/g, '%5B').replace(/\]/g, '%5D').replace(/!/g, '%21')}
       const authToken = await this.authManager.checkAuthToken(pin_id);
       
       if (authToken) {
+        this.connectionVerified = false; // Reset so next tool use will verify the new token
         return {
           content: [
             {
@@ -1172,6 +1307,7 @@ You can run check_auth_status again to check if authentication is complete.`
   async handleClearAuth(args) {
     try {
       await this.authManager.clearAuth();
+      this.connectionVerified = false; // Reset connection verification
       
       return {
         content: [
@@ -1200,6 +1336,12 @@ All stored authentication credentials have been cleared. To use Plex tools again
   }
 
   async handlePlexSearch(args) {
+    // Verify connection before proceeding
+    const connectionCheck = await this.ensureConnection();
+    if (!connectionCheck.success) {
+      return connectionCheck.response;
+    }
+
     const { 
       query, 
       type, 
@@ -1250,7 +1392,7 @@ All stored authentication credentials have been cleared. To use Plex tools again
         params.type = this.getPlexTypeNumber(type);
       }
 
-      const response = await axios.get(searchUrl, { 
+      const response = await this.axios.get(searchUrl, { 
         params,
         httpsAgent: this.getHttpsAgent()
       });
@@ -1445,6 +1587,12 @@ All stored authentication credentials have been cleared. To use Plex tools again
   }
 
   async handleBrowseLibraries(args) {
+    // Verify connection before proceeding
+    const connectionCheck = await this.ensureConnection();
+    if (!connectionCheck.success) {
+      return connectionCheck.response;
+    }
+
     try {
       const plexUrl = process.env.PLEX_URL || 'https://app.plex.tv';
       const plexToken = await this.authManager.getAuthToken();
@@ -1454,7 +1602,7 @@ All stored authentication credentials have been cleared. To use Plex tools again
         'X-Plex-Token': plexToken
       };
 
-      const response = await axios.get(librariesUrl, { 
+      const response = await this.axios.get(librariesUrl, { 
         params,
         httpsAgent: this.getHttpsAgent()
       });
@@ -1584,7 +1732,7 @@ All stored authentication credentials have been cleared. To use Plex tools again
         params.year = year;
       }
 
-      const response = await axios.get(libraryUrl, { 
+      const response = await this.axios.get(libraryUrl, { 
         params,
         httpsAgent: this.getHttpsAgent()
       });
@@ -1710,7 +1858,7 @@ All stored authentication credentials have been cleared. To use Plex tools again
         'X-Plex-Container-Size': limit
       };
 
-      const response = await axios.get(recentUrl, { 
+      const response = await this.axios.get(recentUrl, { 
         params,
         httpsAgent: this.getHttpsAgent()
       });
@@ -1804,7 +1952,7 @@ All stored authentication credentials have been cleared. To use Plex tools again
         params.accountID = account_id;
       }
 
-      const response = await axios.get(historyUrl, { 
+      const response = await this.axios.get(historyUrl, { 
         params,
         httpsAgent: this.getHttpsAgent()
       });
@@ -1920,7 +2068,7 @@ All stored authentication credentials have been cleared. To use Plex tools again
         'X-Plex-Container-Size': limit
       };
 
-      const response = await axios.get(onDeckUrl, { 
+      const response = await this.axios.get(onDeckUrl, { 
         params,
         httpsAgent: this.getHttpsAgent()
       });
@@ -2022,7 +2170,7 @@ All stored authentication credentials have been cleared. To use Plex tools again
         params.playlistType = playlist_type;
       }
 
-      const response = await axios.get(playlistsUrl, { 
+      const response = await this.axios.get(playlistsUrl, { 
         params,
         httpsAgent: this.getHttpsAgent()
       });
@@ -2063,7 +2211,7 @@ All stored authentication credentials have been cleared. To use Plex tools again
 
       // First get playlist info
       const playlistUrl = `${plexUrl}/playlists/${playlist_id}`;
-      const response = await axios.get(playlistUrl, { 
+      const response = await this.axios.get(playlistUrl, { 
         params: {
           'X-Plex-Token': plexToken,
           'X-Plex-Container-Start': 0,
@@ -2093,7 +2241,7 @@ All stored authentication credentials have been cleared. To use Plex tools again
       if (items.length === 0 && playlist.leafCount && playlist.leafCount > 0) {
         try {
           const itemsUrl = `${plexUrl}/playlists/${playlist_id}/items`;
-          const itemsResponse = await axios.get(itemsUrl, { 
+          const itemsResponse = await this.axios.get(itemsUrl, { 
             params: {
               'X-Plex-Token': plexToken,
               'X-Plex-Container-Start': 0,
@@ -2263,7 +2411,7 @@ All stored authentication credentials have been cleared. To use Plex tools again
       const plexToken = await this.authManager.getAuthToken();
 
       // First get server info to get machine identifier
-      const serverResponse = await axios.get(`${plexUrl}/`, {
+      const serverResponse = await this.axios.get(`${plexUrl}/`, {
         headers: { 'X-Plex-Token': plexToken },
         httpsAgent: this.getHttpsAgent()
       });
@@ -2294,7 +2442,7 @@ All stored authentication credentials have been cleared. To use Plex tools again
 
       const createUrl = `${plexUrl}/playlists?${params.toString()}`;
 
-      const response = await axios.post(createUrl, null, { 
+      const response = await this.axios.post(createUrl, null, { 
         headers: {
           'Content-Length': '0'
         },
@@ -2357,7 +2505,7 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
       const plexToken = await this.authManager.getAuthToken();
 
       // Get server machine identifier
-      const serverResponse = await axios.get(`${plexUrl}`, {
+      const serverResponse = await this.axios.get(`${plexUrl}`, {
         headers: {
           'X-Plex-Token': plexToken,
           'Accept': 'application/json'
@@ -2398,7 +2546,7 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
       createParams.append('smart', '1');
       createParams.append('uri', uri);
 
-      const response = await axios.post(`${plexUrl}/playlists?${createParams.toString()}`, null, {
+      const response = await this.axios.post(`${plexUrl}/playlists?${createParams.toString()}`, null, {
         headers: {
           'X-Plex-Token': plexToken,
           'Accept': 'application/json'
@@ -2529,7 +2677,7 @@ The smart playlist has been created and is now available in your Plex library!`,
       const playlistItemsUrl = `${plexUrl}/playlists/${playlist_id}/items`;
       
       // Get playlist metadata (title, etc.)
-      const playlistInfoResponse = await axios.get(playlistInfoUrl, { 
+      const playlistInfoResponse = await this.axios.get(playlistInfoUrl, { 
         params: {
           'X-Plex-Token': plexToken
         },
@@ -2543,7 +2691,7 @@ The smart playlist has been created and is now available in your Plex library!`,
       // Get current playlist items count
       let beforeCount = 0;
       try {
-        const beforeResponse = await axios.get(playlistItemsUrl, { 
+        const beforeResponse = await this.axios.get(playlistItemsUrl, { 
           params: {
             'X-Plex-Token': plexToken
           },
@@ -2557,7 +2705,7 @@ The smart playlist has been created and is now available in your Plex library!`,
       }
 
       // Get server machine identifier for proper URI format
-      const serverResponse = await axios.get(`${plexUrl}/`, {
+      const serverResponse = await this.axios.get(`${plexUrl}/`, {
         headers: { 'X-Plex-Token': plexToken },
         httpsAgent: this.getHttpsAgent()
       });
@@ -2579,7 +2727,7 @@ The smart playlist has been created and is now available in your Plex library!`,
           'X-Plex-Token': plexToken,
           uri: `server://${machineIdentifier}/com.plexapp.plugins.library/library/metadata/${item_keys[0]}`
         };
-        response = await axios.put(addUrl, null, { params, httpsAgent: this.getHttpsAgent() });
+        response = await this.axios.put(addUrl, null, { params, httpsAgent: this.getHttpsAgent() });
         batchMethod = 'single';
         
       } else {
@@ -2600,7 +2748,7 @@ The smart playlist has been created and is now available in your Plex library!`,
               console.log(`Adding item ${itemKey} individually...`);
             }
             
-            const singleResponse = await axios.put(addUrl, null, { 
+            const singleResponse = await this.axios.put(addUrl, null, { 
               params: singleParams, 
               httpsAgent: this.getHttpsAgent(),
               timeout: 10000, // 10 second timeout
@@ -2657,11 +2805,11 @@ The smart playlist has been created and is now available in your Plex library!`,
         try {
           // Try both the items endpoint and playlist metadata endpoint
           const [itemsResponse, playlistResponse] = await Promise.allSettled([
-            axios.get(playlistItemsUrl, { 
+            this.axios.get(playlistItemsUrl, { 
               params: { 'X-Plex-Token': plexToken },
               httpsAgent: this.getHttpsAgent()
             }),
-            axios.get(playlistInfoUrl, { 
+            this.axios.get(playlistInfoUrl, { 
               params: { 'X-Plex-Token': plexToken },
               httpsAgent: this.getHttpsAgent()
             })
@@ -2826,7 +2974,7 @@ The smart playlist has been created and is now available in your Plex library!`,
       const playlistItemsUrl = `${plexUrl}/playlists/${playlist_id}/items`;
       
       // Get playlist metadata (title, etc.)
-      const playlistInfoResponse = await axios.get(playlistInfoUrl, { 
+      const playlistInfoResponse = await this.axios.get(playlistInfoUrl, { 
         params: {
           'X-Plex-Token': plexToken
         },
@@ -2841,7 +2989,7 @@ The smart playlist has been created and is now available in your Plex library!`,
       let beforeCount = 0;
       let playlistItems = [];
       try {
-        const beforeResponse = await axios.get(playlistItemsUrl, { 
+        const beforeResponse = await this.axios.get(playlistItemsUrl, { 
           params: {
             'X-Plex-Token': plexToken
           },
@@ -2856,7 +3004,7 @@ The smart playlist has been created and is now available in your Plex library!`,
       }
 
       // Get server machine identifier for proper URI format
-      const serverResponse = await axios.get(`${plexUrl}/`, {
+      const serverResponse = await this.axios.get(`${plexUrl}/`, {
         headers: { 'X-Plex-Token': plexToken },
         httpsAgent: this.getHttpsAgent()
       });
@@ -2899,7 +3047,7 @@ The smart playlist has been created and is now available in your Plex library!`,
         uri: itemsToRemove.map(item => `server://${machineIdentifier}/com.plexapp.plugins.library/library/metadata/${item.ratingKey}`).join(',')
       };
 
-      const response = await axios.delete(removeUrl, { 
+      const response = await this.axios.delete(removeUrl, { 
         params,
         httpsAgent: this.getHttpsAgent()
       });
@@ -2913,7 +3061,7 @@ The smart playlist has been created and is now available in your Plex library!`,
       // Verify the removal by checking the playlist items again
       let afterCount = 0;
       try {
-        const afterResponse = await axios.get(playlistItemsUrl, { 
+        const afterResponse = await this.axios.get(playlistItemsUrl, { 
           params: {
             'X-Plex-Token': plexToken
           },
@@ -3006,7 +3154,7 @@ The smart playlist has been created and is now available in your Plex library!`,
         'X-Plex-Token': plexToken
       };
 
-      const response = await axios.delete(deleteUrl, { 
+      const response = await this.axios.delete(deleteUrl, { 
         params,
         httpsAgent: this.getHttpsAgent()
       });
@@ -3055,7 +3203,7 @@ The smart playlist has been created and is now available in your Plex library!`,
             params.accountID = account_id;
           }
 
-          const response = await axios.get(itemUrl, { 
+          const response = await this.axios.get(itemUrl, { 
             params,
             httpsAgent: this.getHttpsAgent()
           });
@@ -3495,7 +3643,7 @@ The smart playlist has been created and is now available in your Plex library!`,
         'X-Plex-Token': plexToken
       };
 
-      const response = await axios.get(collectionsUrl, { 
+      const response = await this.axios.get(collectionsUrl, { 
         params,
         httpsAgent: this.getHttpsAgent()
       });
@@ -3542,7 +3690,7 @@ The smart playlist has been created and is now available in your Plex library!`,
         'X-Plex-Container-Size': limit
       };
 
-      const response = await axios.get(collectionUrl, { 
+      const response = await this.axios.get(collectionUrl, { 
         params,
         httpsAgent: this.getHttpsAgent()
       });
@@ -3638,7 +3786,7 @@ The smart playlist has been created and is now available in your Plex library!`,
         'X-Plex-Token': plexToken
       };
 
-      const response = await axios.get(mediaUrl, { 
+      const response = await this.axios.get(mediaUrl, { 
         params,
         httpsAgent: this.getHttpsAgent()
       });
@@ -3923,7 +4071,7 @@ The smart playlist has been created and is now available in your Plex library!`,
       const plexToken = await this.authManager.getAuthToken();
 
       // Get library information first
-      const librariesResponse = await axios.get(`${plexUrl}/library/sections`, { 
+      const librariesResponse = await this.axios.get(`${plexUrl}/library/sections`, { 
         params: { 'X-Plex-Token': plexToken },
         httpsAgent: this.getHttpsAgent()
       });
@@ -4008,7 +4156,7 @@ The smart playlist has been created and is now available in your Plex library!`,
       let hasMore = true;
 
       while (hasMore) {
-        const contentResponse = await axios.get(`${plexUrl}/library/sections/${library.key}/all`, { 
+        const contentResponse = await this.axios.get(`${plexUrl}/library/sections/${library.key}/all`, { 
           params: { 
             'X-Plex-Token': plexToken,
             'X-Plex-Container-Start': offset,
@@ -4053,7 +4201,7 @@ The smart playlist has been created and is now available in your Plex library!`,
           // Get detailed media information if available
           if (item.key) {
             try {
-              const mediaResponse = await axios.get(`${plexUrl}${item.key}`, { 
+              const mediaResponse = await this.axios.get(`${plexUrl}${item.key}`, { 
                 params: { 'X-Plex-Token': plexToken },
                 httpsAgent: this.getHttpsAgent()
               });
@@ -4278,7 +4426,7 @@ The smart playlist has been created and is now available in your Plex library!`,
       if (music_library_id) {
         musicLibraries = [{ key: music_library_id, title: 'Music Library' }];
       } else {
-        const librariesResponse = await axios.get(`${plexUrl}/library/sections`, { 
+        const librariesResponse = await this.axios.get(`${plexUrl}/library/sections`, { 
           params: { 'X-Plex-Token': plexToken },
           httpsAgent: this.getHttpsAgent()
         });
@@ -4339,7 +4487,7 @@ The smart playlist has been created and is now available in your Plex library!`,
       const plexToken = await this.authManager.getAuthToken();
 
       // Get music libraries
-      const librariesResponse = await axios.get(`${plexUrl}/library/sections`, { 
+      const librariesResponse = await this.axios.get(`${plexUrl}/library/sections`, { 
         params: { 'X-Plex-Token': plexToken },
         httpsAgent: this.getHttpsAgent()
       });
@@ -4472,7 +4620,7 @@ The smart playlist has been created and is now available in your Plex library!`,
     }
 
     try {
-      const historyResponse = await axios.get(`${plexUrl}/status/sessions/history/all`, { 
+      const historyResponse = await this.axios.get(`${plexUrl}/status/sessions/history/all`, { 
         params: historyParams,
         httpsAgent: this.getHttpsAgent()
       });
@@ -4549,7 +4697,7 @@ The smart playlist has been created and is now available in your Plex library!`,
         // Search for tracks to get genre information
         for (const trackName of topTrackNames) {
           try {
-            const searchResponse = await axios.get(`${plexUrl}/library/sections/${library.key}/search`, {
+            const searchResponse = await this.axios.get(`${plexUrl}/library/sections/${library.key}/search`, {
               params: {
                 'X-Plex-Token': plexToken,
                 query: trackName,
@@ -4561,7 +4709,7 @@ The smart playlist has been created and is now available in your Plex library!`,
             const tracks = this.parseSearchResults(searchResponse.data);
             for (const track of tracks.slice(0, 1)) { // Just take first match
               if (track.key) {
-                const trackDetailResponse = await axios.get(`${plexUrl}${track.key}`, {
+                const trackDetailResponse = await this.axios.get(`${plexUrl}${track.key}`, {
                   params: { 'X-Plex-Token': plexToken },
                   httpsAgent: this.getHttpsAgent()
                 });
@@ -4602,7 +4750,7 @@ The smart playlist has been created and is now available in your Plex library!`,
         // Find new tracks in favorite genres
         for (const genre of topGenres.slice(0, 2)) {
           try {
-            const genreSearchResponse = await axios.get(`${plexUrl}/library/sections/${library.key}/all`, {
+            const genreSearchResponse = await this.axios.get(`${plexUrl}/library/sections/${library.key}/all`, {
               params: {
                 'X-Plex-Token': plexToken,
                 genre: genre,
@@ -4635,7 +4783,7 @@ The smart playlist has been created and is now available in your Plex library!`,
         // Find tracks by similar artists
         for (const artist of topArtists.slice(0, 2)) {
           try {
-            const artistSearchResponse = await axios.get(`${plexUrl}/library/sections/${library.key}/search`, {
+            const artistSearchResponse = await this.axios.get(`${plexUrl}/library/sections/${library.key}/search`, {
               params: {
                 'X-Plex-Token': plexToken,
                 query: artist,
@@ -4647,7 +4795,7 @@ The smart playlist has been created and is now available in your Plex library!`,
             const artists = this.parseSearchResults(artistSearchResponse.data);
             for (const foundArtist of artists.slice(0, 1)) {
               if (foundArtist.key) {
-                const artistDetailResponse = await axios.get(`${plexUrl}${foundArtist.key}`, {
+                const artistDetailResponse = await this.axios.get(`${plexUrl}${foundArtist.key}`, {
                   params: { 'X-Plex-Token': plexToken },
                   httpsAgent: this.getHttpsAgent()
                 });
@@ -4697,7 +4845,7 @@ The smart playlist has been created and is now available in your Plex library!`,
       // Find artists in your top genres that you don't already listen to
       for (const genre of topGenres.slice(0, 2)) {
         try {
-          const genreArtistsResponse = await axios.get(`${plexUrl}/library/sections/${library.key}/all`, {
+          const genreArtistsResponse = await this.axios.get(`${plexUrl}/library/sections/${library.key}/all`, {
             params: {
               'X-Plex-Token': plexToken,
               genre: genre,
@@ -4719,7 +4867,7 @@ The smart playlist has been created and is now available in your Plex library!`,
           // Get tracks from similar artists you haven't discovered yet
           for (const artist of similarArtists.slice(0, 2)) {
             try {
-              const artistTracksResponse = await axios.get(`${plexUrl}${artist.key}`, {
+              const artistTracksResponse = await this.axios.get(`${plexUrl}${artist.key}`, {
                 params: { 
                   'X-Plex-Token': plexToken,
                   'X-Plex-Container-Size': 5
@@ -4871,7 +5019,7 @@ The smart playlist has been created and is now available in your Plex library!`,
     
     for (const library of musicLibraries) {
       try {
-        const response = await axios.get(`${plexUrl}/library/sections/${library.key}/all`, {
+        const response = await this.axios.get(`${plexUrl}/library/sections/${library.key}/all`, {
           params: {
             'X-Plex-Token': plexToken,
             type: 10, // Track type
@@ -4916,7 +5064,7 @@ The smart playlist has been created and is now available in your Plex library!`,
     
     for (const library of musicLibraries) {
       try {
-        const artistResponse = await axios.get(`${plexUrl}/library/sections/${library.key}/search`, {
+        const artistResponse = await this.axios.get(`${plexUrl}/library/sections/${library.key}/search`, {
           params: {
             'X-Plex-Token': plexToken,
             query: targetArtist,
@@ -4928,7 +5076,7 @@ The smart playlist has been created and is now available in your Plex library!`,
         const artists = this.parseSearchResults(artistResponse.data);
         if (artists.length > 0) {
           // Get artist details to find genres
-          const artistDetailResponse = await axios.get(`${plexUrl}${artists[0].key}`, {
+          const artistDetailResponse = await this.axios.get(`${plexUrl}${artists[0].key}`, {
             params: { 'X-Plex-Token': plexToken },
             httpsAgent: this.getHttpsAgent()
           });
@@ -4960,7 +5108,7 @@ The smart playlist has been created and is now available in your Plex library!`,
     for (const genre of genres.slice(0, 2)) {
       for (const library of musicLibraries) {
         try {
-          const response = await axios.get(`${plexUrl}/library/sections/${library.key}/all`, {
+          const response = await this.axios.get(`${plexUrl}/library/sections/${library.key}/all`, {
             params: {
               'X-Plex-Token': plexToken,
               genre: genre,
@@ -5006,7 +5154,7 @@ The smart playlist has been created and is now available in your Plex library!`,
     
     for (const library of musicLibraries) {
       try {
-        const response = await axios.get(`${plexUrl}/library/sections/${library.key}/all`, {
+        const response = await this.axios.get(`${plexUrl}/library/sections/${library.key}/all`, {
           params: {
             'X-Plex-Token': plexToken,
             type: 10, // Track type
@@ -5046,7 +5194,7 @@ The smart playlist has been created and is now available in your Plex library!`,
     
     for (const library of musicLibraries) {
       try {
-        const response = await axios.get(`${plexUrl}/library/sections/${library.key}/all`, {
+        const response = await this.axios.get(`${plexUrl}/library/sections/${library.key}/all`, {
           params: {
             'X-Plex-Token': plexToken,
             genre: genre,
@@ -5085,7 +5233,7 @@ The smart playlist has been created and is now available in your Plex library!`,
     
     for (const library of musicLibraries) {
       try {
-        const response = await axios.get(`${plexUrl}/library/sections/${library.key}/search`, {
+        const response = await this.axios.get(`${plexUrl}/library/sections/${library.key}/search`, {
           params: {
             'X-Plex-Token': plexToken,
             query: query,
@@ -5218,6 +5366,523 @@ The smart playlist has been created and is now available in your Plex library!`,
     }
 
     return formatted;
+  }
+
+  setupResourceHandlers() {
+    // List available resources
+    this.server.setRequestHandler(ListResourcesRequestSchema, async () => {
+      const resources = [];
+
+      try {
+        // Only provide resources if we can authenticate
+        const plexToken = await this.authManager.getAuthToken();
+        if (!plexToken) {
+          return { resources: [] };
+        }
+
+        const plexUrl = process.env.PLEX_URL || 'https://app.plex.tv';
+
+        // Get libraries to create dynamic resources
+        const librariesUrl = `${plexUrl}/library/sections`;
+        const response = await this.axios.get(librariesUrl, { 
+          params: { 'X-Plex-Token': plexToken },
+          httpsAgent: this.getHttpsAgent(),
+          timeout: 10000
+        });
+
+        if (response.data?.MediaContainer?.Directory) {
+          for (const library of response.data.MediaContainer.Directory) {
+            resources.push({
+              uri: `plex://library/${library.key}`,
+              name: `${library.title} Library`,
+              description: `Access all content in the ${library.title} library (${library.type})`,
+              mimeType: "application/json"
+            });
+
+            // Add recently added for each library
+            resources.push({
+              uri: `plex://library/${library.key}/recent`,
+              name: `${library.title} - Recently Added`,
+              description: `Recently added content from ${library.title} library`,
+              mimeType: "application/json"
+            });
+          }
+        }
+
+        // Add global resources
+        resources.push(
+          {
+            uri: "plex://libraries",
+            name: "All Libraries",
+            description: "List of all Plex libraries with their metadata",
+            mimeType: "application/json"
+          },
+          {
+            uri: "plex://recent",
+            name: "Recently Added Content",
+            description: "Recently added content across all libraries",
+            mimeType: "application/json"
+          },
+          {
+            uri: "plex://playlists",
+            name: "All Playlists",
+            description: "List of all playlists on the server",
+            mimeType: "application/json"
+          },
+          {
+            uri: "plex://on-deck",
+            name: "Continue Watching",
+            description: "Content that's currently being watched (on deck)",
+            mimeType: "application/json"
+          },
+          {
+            uri: "plex://stats",
+            name: "Server Statistics",
+            description: "Library statistics and storage information",
+            mimeType: "application/json"
+          }
+        );
+
+      } catch (error) {
+        console.error('Error listing resources:', error.message);
+        // Return basic resources even if we can't connect
+        resources.push({
+          uri: "plex://status",
+          name: "Connection Status",
+          description: "Current Plex server connection status",
+          mimeType: "application/json"
+        });
+      }
+
+      return { resources };
+    });
+
+    // Read specific resources
+    this.server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+      const { uri } = request.params;
+      
+      try {
+        const plexToken = await this.authManager.getAuthToken();
+        const plexUrl = process.env.PLEX_URL || 'https://app.plex.tv';
+
+        if (uri === "plex://status") {
+          const status = await this.verifyConnection();
+          return {
+            contents: [{
+              uri,
+              mimeType: "application/json",
+              text: JSON.stringify(status, null, 2)
+            }]
+          };
+        }
+
+        if (!plexToken) {
+          throw new Error('Authentication required to access this resource');
+        }
+
+        if (uri === "plex://libraries") {
+          const response = await this.axios.get(`${plexUrl}/library/sections`, { 
+            params: { 'X-Plex-Token': plexToken },
+            httpsAgent: this.getHttpsAgent(),
+            timeout: 10000
+          });
+          return {
+            contents: [{
+              uri,
+              mimeType: "application/json",
+              text: JSON.stringify(response.data?.MediaContainer, null, 2)
+            }]
+          };
+        }
+
+        if (uri === "plex://recent") {
+          const response = await this.axios.get(`${plexUrl}/library/recentlyAdded`, { 
+            params: { 'X-Plex-Token': plexToken },
+            httpsAgent: this.getHttpsAgent(),
+            timeout: 15000
+          });
+          return {
+            contents: [{
+              uri,
+              mimeType: "application/json",
+              text: JSON.stringify(response.data?.MediaContainer, null, 2)
+            }]
+          };
+        }
+
+        if (uri === "plex://playlists") {
+          const response = await this.axios.get(`${plexUrl}/playlists`, { 
+            params: { 'X-Plex-Token': plexToken },
+            httpsAgent: this.getHttpsAgent(),
+            timeout: 10000
+          });
+          return {
+            contents: [{
+              uri,
+              mimeType: "application/json", 
+              text: JSON.stringify(response.data?.MediaContainer, null, 2)
+            }]
+          };
+        }
+
+        if (uri === "plex://on-deck") {
+          const response = await this.axios.get(`${plexUrl}/library/onDeck`, { 
+            params: { 'X-Plex-Token': plexToken },
+            httpsAgent: this.getHttpsAgent(),
+            timeout: 10000
+          });
+          return {
+            contents: [{
+              uri,
+              mimeType: "application/json",
+              text: JSON.stringify(response.data?.MediaContainer, null, 2)
+            }]
+          };
+        }
+
+        if (uri === "plex://stats") {
+          const stats = await this.getLibraryStatsInternal(plexToken, plexUrl);
+          return {
+            contents: [{
+              uri,
+              mimeType: "application/json",
+              text: JSON.stringify(stats, null, 2)
+            }]
+          };
+        }
+
+        // Handle library-specific resources: plex://library/{id} or plex://library/{id}/recent
+        const libraryMatch = uri.match(/^plex:\/\/library\/(\d+)(\/recent)?$/);
+        if (libraryMatch) {
+          const libraryId = libraryMatch[1];
+          const isRecent = !!libraryMatch[2];
+          
+          let endpoint;
+          if (isRecent) {
+            endpoint = `${plexUrl}/library/sections/${libraryId}/recentlyAdded`;
+          } else {
+            endpoint = `${plexUrl}/library/sections/${libraryId}/all`;
+          }
+          
+          const response = await this.axios.get(endpoint, { 
+            params: { 'X-Plex-Token': plexToken },
+            httpsAgent: this.getHttpsAgent(),
+            timeout: 15000
+          });
+          
+          return {
+            contents: [{
+              uri,
+              mimeType: "application/json",
+              text: JSON.stringify(response.data?.MediaContainer, null, 2)
+            }]
+          };
+        }
+
+        throw new Error(`Unknown resource URI: ${uri}`);
+
+      } catch (error) {
+        console.error(`Error reading resource ${uri}:`, error.message);
+        return {
+          contents: [{
+            uri,
+            mimeType: "application/json",
+            text: JSON.stringify({ error: error.message }, null, 2)
+          }]
+        };
+      }
+    });
+  }
+
+  setupPromptHandlers() {
+    // List available prompts
+    this.server.setRequestHandler(ListPromptsRequestSchema, async () => {
+      return {
+        prompts: [
+          {
+            name: "playlist_description",
+            description: "Generate a creative description for a playlist",
+            arguments: [
+              {
+                name: "playlist_name",
+                description: "Name of the playlist",
+                required: true
+              },
+              {
+                name: "genre",
+                description: "Primary genre or mood of the playlist",
+                required: false
+              },
+              {
+                name: "content_info",
+                description: "Information about the content in the playlist",
+                required: false
+              }
+            ]
+          },
+          {
+            name: "content_recommendation",
+            description: "Generate content recommendations based on viewing history or preferences",
+            arguments: [
+              {
+                name: "liked_content",
+                description: "Titles of content the user has enjoyed",
+                required: true
+              },
+              {
+                name: "content_type",
+                description: "Type of content to recommend (movies, tv shows, music, etc.)",
+                required: false
+              },
+              {
+                name: "mood_or_genre",
+                description: "Specific mood or genre preferences",
+                required: false
+              }
+            ]
+          },
+          {
+            name: "smart_playlist_rules",
+            description: "Generate smart playlist criteria and rules",
+            arguments: [
+              {
+                name: "intent",
+                description: "What kind of smart playlist you want to create",
+                required: true
+              },
+              {
+                name: "library_type",
+                description: "Type of library (music, movies, tv shows)",
+                required: false
+              }
+            ]
+          },
+          {
+            name: "media_analysis",
+            description: "Analyze and categorize media content",
+            arguments: [
+              {
+                name: "content_data",
+                description: "JSON data about the media content",
+                required: true
+              },
+              {
+                name: "analysis_type",
+                description: "Type of analysis (genre patterns, viewing trends, collection gaps, etc.)",
+                required: false
+              }
+            ]
+          },
+          {
+            name: "server_troubleshooting",
+            description: "Help diagnose Plex server connection or performance issues",
+            arguments: [
+              {
+                name: "error_details",
+                description: "Details about the error or issue encountered",
+                required: true
+              },
+              {
+                name: "server_info",
+                description: "Information about the server setup and configuration",
+                required: false
+              }
+            ]
+          }
+        ]
+      };
+    });
+
+    // Get specific prompt
+    this.server.setRequestHandler(GetPromptRequestSchema, async (request) => {
+      const { name, arguments: args } = request.params;
+
+      switch (name) {
+        case "playlist_description":
+          const playlistName = args?.playlist_name || "Your Playlist";
+          const genre = args?.genre || "";
+          const contentInfo = args?.content_info || "";
+          
+          return {
+            description: `Generate a creative and engaging description for the playlist "${playlistName}"`,
+            messages: [
+              {
+                role: "user",
+                content: {
+                  type: "text",
+                  text: `Create a creative, engaging description for a playlist called "${playlistName}"${genre ? ` in the ${genre} genre` : ""}${contentInfo ? `.\n\nPlaylist content information:\n${contentInfo}` : ""}.
+
+The description should:
+- Be 2-3 sentences long
+- Capture the mood and vibe of the playlist
+- Be engaging and make people want to listen/watch
+- Use vivid, descriptive language
+${genre ? `- Reflect the ${genre} genre characteristics` : ""}
+
+Make it sound compelling and professional, like something you'd see on a streaming service.`
+                }
+              }
+            ]
+          };
+
+        case "content_recommendation":
+          const likedContent = args?.liked_content || "";
+          const contentType = args?.content_type || "content";
+          const moodOrGenre = args?.mood_or_genre || "";
+
+          return {
+            description: `Generate personalized content recommendations`,
+            messages: [
+              {
+                role: "user",
+                content: {
+                  type: "text",
+                  text: `Based on these titles I've enjoyed: ${likedContent}
+
+Please recommend similar ${contentType}${moodOrGenre ? ` in the ${moodOrGenre} style` : ""}.
+
+For each recommendation, provide:
+- Title and year
+- Brief explanation of why it's similar to what I liked
+- What makes it appealing
+- Any notable cast, creators, or standout features
+
+Focus on finding hidden gems and quality content that matches my taste preferences shown in the titles I mentioned.`
+                }
+              }
+            ]
+          };
+
+        case "smart_playlist_rules":
+          const intent = args?.intent || "";
+          const libraryType = args?.library_type || "media";
+
+          return {
+            description: `Generate smart playlist criteria and filtering rules`,
+            messages: [
+              {
+                role: "user",
+                content: {
+                  type: "text",
+                  text: `I want to create a smart playlist for: ${intent}
+
+Library type: ${libraryType}
+
+Please suggest specific filtering criteria and rules that would work well for this playlist, including:
+- Recommended filters (genre, year, rating, etc.)
+- Sorting preferences
+- Any advanced criteria that would enhance the playlist
+- Tips for keeping the playlist fresh and relevant
+
+Provide practical, actionable suggestions that would create a great automated playlist.`
+                }
+              }
+            ]
+          };
+
+        case "media_analysis":
+          const contentData = args?.content_data || "";
+          const analysisType = args?.analysis_type || "general analysis";
+
+          return {
+            description: `Analyze media library content and patterns`,
+            messages: [
+              {
+                role: "user",
+                content: {
+                  type: "text",
+                  text: `Please analyze this media library data for ${analysisType}:
+
+${contentData}
+
+Provide insights about:
+- Patterns and trends in the collection
+- Genre distribution and preferences
+- Quality and completeness of the library
+- Recommendations for improvement or expansion
+- Any interesting observations about the content
+
+Format the analysis in a clear, organized way that's easy to understand and actionable.`
+                }
+              }
+            ]
+          };
+
+        case "server_troubleshooting":
+          const errorDetails = args?.error_details || "";
+          const serverInfo = args?.server_info || "";
+
+          return {
+            description: `Help diagnose and resolve Plex server issues`,
+            messages: [
+              {
+                role: "user",
+                content: {
+                  type: "text",
+                  text: `I'm having an issue with my Plex server. Here are the details:
+
+Error/Issue: ${errorDetails}
+
+${serverInfo ? `Server Information:\n${serverInfo}\n` : ""}
+
+Please help me:
+1. Understand what might be causing this issue
+2. Provide step-by-step troubleshooting steps
+3. Suggest preventive measures for the future
+4. Identify if this is a common issue with known solutions
+
+Focus on practical, actionable solutions that don't require advanced technical expertise.`
+                }
+              }
+            ]
+          };
+
+        default:
+          throw new Error(`Unknown prompt: ${name}`);
+      }
+    });
+  }
+
+  async getLibraryStatsInternal(plexToken, plexUrl) {
+    try {
+      const response = await this.axios.get(`${plexUrl}/library/sections`, { 
+        params: { 'X-Plex-Token': plexToken },
+        httpsAgent: this.getHttpsAgent(),
+        timeout: 10000
+      });
+
+      const libraries = response.data?.MediaContainer?.Directory || [];
+      const stats = {
+        totalLibraries: libraries.length,
+        libraries: []
+      };
+
+      for (const library of libraries) {
+        const libResponse = await this.axios.get(`${plexUrl}/library/sections/${library.key}/all`, { 
+          params: { 'X-Plex-Token': plexToken },
+          httpsAgent: this.getHttpsAgent(),
+          timeout: 15000
+        });
+
+        const libStats = {
+          name: library.title,
+          type: library.type,
+          itemCount: libResponse.data?.MediaContainer?.size || 0,
+          agent: library.agent,
+          scanner: library.scanner,
+          language: library.language,
+          refreshing: library.refreshing || false,
+          createdAt: library.createdAt,
+          updatedAt: library.updatedAt
+        };
+
+        stats.libraries.push(libStats);
+      }
+
+      return stats;
+    } catch (error) {
+      return { error: `Failed to get library stats: ${error.message}` };
+    }
   }
 
   async run() {

@@ -22,6 +22,10 @@
 
 ## Unimplemented Plex API Features
 
+# Random human shit
+
+SMithery integration shows tools but no "provided resources" or "provided prompts" - we should identify what these mean and whether they are useful in the context of the Plex MCP.
+
 ### Critical Missing APIs (High Priority)
 
 #### Session Management

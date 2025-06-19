@@ -7,10 +7,12 @@ const PlexMCPServer = require('../../index.js');
 describe('Error Handling Tests', () => {
   let server;
   let mock;
+  let mockAxios;
 
   beforeEach(() => {
-    server = new PlexMCPServer();
-    mock = new MockAdapter(axios);
+    mockAxios = axios.create();
+    mock = new MockAdapter(mockAxios);
+    server = new PlexMCPServer({ axios: mockAxios });
     process.env.PLEX_TOKEN = 'test-token';
     process.env.PLEX_URL = 'http://localhost:32400';
   });
@@ -29,7 +31,7 @@ describe('Error Handling Tests', () => {
       const result = await server.handlePlexSearch({ query: 'test' });
       
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain('Error searching Plex');
+      expect(result.content[0].text).toContain('Connection Failed');
     });
 
     it('should handle missing PLEX_TOKEN in handleCreatePlaylist', async () => {
@@ -49,7 +51,7 @@ describe('Error Handling Tests', () => {
       const result = await server.handleBrowseLibraries({});
       
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain('Error browsing libraries');
+      expect(result.content[0].text).toContain('Connection Failed');
     });
   });
 
@@ -81,7 +83,7 @@ describe('Error Handling Tests', () => {
       const result = await server.handlePlexSearch({ query: 'test' });
       
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain('Error searching Plex');
+      expect(result.content[0].text).toContain('Connection Failed');
     });
 
     it('should handle timeout errors', async () => {
@@ -90,7 +92,7 @@ describe('Error Handling Tests', () => {
       const result = await server.handleBrowseLibraries({});
       
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain('Error browsing libraries');
+      expect(result.content[0].text).toContain('Connection Failed');
     });
   });
 

@@ -7,8 +7,9 @@ describe('Coverage Boost Tests', () => {
   let mock;
 
   beforeEach(() => {
-    server = new PlexMCPServer();
-    mock = new MockAdapter(axios);
+    const mockAxios = axios.create();
+    mock = new MockAdapter(mockAxios);
+    server = new PlexMCPServer({ axios: mockAxios });
     process.env.PLEX_TOKEN = 'test-token';
     process.env.PLEX_URL = 'http://localhost:32400';
   });

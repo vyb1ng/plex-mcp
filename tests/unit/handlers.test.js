@@ -7,10 +7,12 @@ const PlexMCPServer = require('../../index.js');
 describe('Handler Functions Tests', () => {
   let server;
   let mock;
+  let mockAxios;
 
   beforeEach(() => {
-    server = new PlexMCPServer();
-    mock = new MockAdapter(axios);
+    mockAxios = axios.create();
+    mock = new MockAdapter(mockAxios);
+    server = new PlexMCPServer({ axios: mockAxios });
     process.env.PLEX_TOKEN = 'test-token';
     process.env.PLEX_URL = 'http://localhost:32400';
   });
