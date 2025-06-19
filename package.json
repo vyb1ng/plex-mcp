@@ -8,6 +8,7 @@
   },
   "scripts": {
     "start": "node index.js",
+    "start:sse": "MCP_TRANSPORT=sse node index.js",
     "test": "jest --testPathIgnorePatterns=/tests/e2e/",
     "test:e2e": "jest --testPathPattern=e2e",
     "test:e2e:analysis": "jest --testPathPattern=e2e --testNamePattern=\"(Playlist Behavior Analysis|Critical Remove Bug Investigation|Multiple Item Addition Analysis)\"",
@@ -42,6 +43,8 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.13.0",
     "axios": "^1.10.0",
+    "cors": "^2.8.5",
+    "express": "^5.1.0",
     "plex-oauth": "^2.1.0"
   },
   "devDependencies": {

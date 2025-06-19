@@ -5221,9 +5221,89 @@ The smart playlist has been created and is now available in your Plex library!`,
   }
 
   async run() {
+    // Check if SSE mode is explicitly requested
+    if (process.env.MCP_TRANSPORT === 'sse' || process.argv.includes('--sse')) {
+      return this.runSSE();
+    }
+    
+    // Default to stdio transport
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
     console.error("Plex MCP server running on stdio");
+  }
+
+  async runSSE() {
+    const express = require('express');
+    const cors = require('cors');
+    const { SSEServerTransport } = require("@modelcontextprotocol/sdk/server/sse.js");
+    
+    const app = express();
+    
+    // Enable CORS for all routes
+    app.use(cors({
+      origin: '*',
+      methods: ['GET', 'POST', 'OPTIONS'],
+      allowedHeaders: ['Content-Type', 'Authorization'],
+      credentials: false
+    }));
+
+    // Health check endpoint
+    app.get('/health', (req, res) => {
+      res.json({ status: 'ok', service: 'plex-mcp-sse-server' });
+    });
+
+    // SSE endpoint for MCP communication
+    app.get('/sse', async (req, res) => {
+      try {
+        console.error('SSE connection established');
+        
+        // Set SSE headers
+        res.writeHead(200, {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          'Connection': 'keep-alive',
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Headers': 'Cache-Control'
+        });
+
+        // Create SSE transport
+        const transport = new SSEServerTransport('/sse', res);
+        await this.server.connect(transport);
+
+        // Handle client disconnect
+        req.on('close', () => {
+          console.error('SSE connection closed');
+        });
+
+      } catch (error) {
+        console.error('Error in SSE endpoint:', error);
+        res.status(500).json({ error: 'Internal server error' });
+      }
+    });
+
+    // Info endpoint to show server details
+    app.get('/', (req, res) => {
+      res.json({
+        name: 'Plex MCP SSE Server',
+        version: '0.4.0',
+        endpoints: {
+          sse: '/sse',
+          health: '/health'
+        },
+        mcp: {
+          transport: 'sse',
+          protocol_version: '2024-11-05'
+        }
+      });
+    });
+
+    // Start the HTTP server
+    const port = process.env.PORT || 3000;
+    app.listen(port, '0.0.0.0', () => {
+      console.error(`Plex MCP SSE server running on http://0.0.0.0:${port}`);
+      console.error(`SSE endpoint: http://0.0.0.0:${port}/sse`);
+      console.error(`Health check: http://0.0.0.0:${port}/health`);
+    });
   }
 }
 
