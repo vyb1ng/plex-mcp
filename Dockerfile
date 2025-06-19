@@ -14,4 +14,5 @@ COPY . .
 ENV PLEX_VERIFY_SSL=true
 
 # Start the MCP server
+USER non-root
 CMD ["node", "index.js"]

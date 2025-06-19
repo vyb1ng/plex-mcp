@@ -168,6 +168,155 @@ class PlexMCPServer {
     });
   }
 
+  // ===========================
+  // RANDOMIZATION HELPER METHODS
+  // ===========================
+
+  /**
+   * Detect if a query suggests randomization is needed
+   * @param {string} query - The search query to analyze
+   * @returns {boolean} - True if randomization patterns detected
+   */
+  detectRandomizationIntent(query) {
+    if (!query || typeof query !== 'string') return false;
+    
+    const randomPatterns = [
+      // Direct randomization requests
+      /\b(some|random|variety|mix|selection|surprise)\s+(songs?|tracks?|albums?|movies?|shows?|episodes?|music)/i,
+      /\b(surprise\s+me|shuffle|mixed\s+bag|something\s+different)/i,
+      /\b(pick|choose|select)\s+(some|a\s+few|several)/i,
+      
+      // Indefinite quantities suggesting variety
+      /\b(some|any|various|assorted|different)\s+(songs?|tracks?|albums?|movies?|shows?|artists?)/i,
+      /\b(give\s+me\s+)?(some|a\s+few|several)\b/i,
+      
+      // Discovery patterns
+      /\b(discover|explore|find\s+me)\s+(new|different)/i,
+      /\b(what|show\s+me)\s+(some|random)/i
+    ];
+    
+    return randomPatterns.some(pattern => pattern.test(query));
+  }
+
+  /**
+   * Determine appropriate randomization settings based on query and content type
+   * @param {string} query - The search query
+   * @param {string} type - Content type (movie, show, track, etc.)
+   * @param {Object} existingParams - Existing search parameters
+   * @returns {Object} - Modified parameters with randomization settings
+   */
+  applyRandomizationSettings(query, type = null, existingParams = {}) {
+    if (!this.detectRandomizationIntent(query)) {
+      return existingParams;
+    }
+
+    const params = { ...existingParams };
+    
+    // Always use random sort when randomization is detected
+    params.sort = 'random';
+    
+    // Adjust default limits for variety (unless user specified a specific limit)
+    if (!params.limit || params.limit === 10) { // Default limits
+      switch (type) {
+        case 'track':
+        case 'music':
+          params.limit = Math.min(25, params.limit || 25); // More songs for variety
+          break;
+        case 'movie':
+        case 'show':
+          params.limit = Math.min(15, params.limit || 15); // Moderate for viewing
+          break;
+        case 'album':
+        case 'artist':
+          params.limit = Math.min(12, params.limit || 12); // Good album variety
+          break;
+        default:
+          params.limit = Math.min(20, params.limit || 20); // General variety
+      }
+    }
+    
+    // For randomization, prefer to start from beginning (no offset)
+    if (params.offset && params.offset > 0) {
+      params.offset = 0;
+    }
+    
+    return params;
+  }
+
+  /**
+   * Apply client-side randomization when server-side isn't sufficient
+   * @param {Array} items - Array of items to randomize
+   * @param {number} maxItems - Maximum number of items to return
+   * @returns {Array} - Shuffled subset of items
+   */
+  applyClientSideRandomization(items, maxItems = null) {
+    if (!Array.isArray(items) || items.length === 0) {
+      return items;
+    }
+    
+    // Simple Fisher-Yates shuffle implementation
+    const shuffled = [...items];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    
+    // Return subset if maxItems specified
+    if (maxItems && maxItems < shuffled.length) {
+      return shuffled.slice(0, maxItems);
+    }
+    
+    return shuffled;
+  }
+
+  /**
+   * Create a randomized subset from multiple categories
+   * @param {Object} categorizedItems - Object with category keys and item arrays
+   * @param {number} totalLimit - Total number of items to return
+   * @returns {Array} - Mixed randomized results
+   */
+  createRandomizedMix(categorizedItems, totalLimit = 20) {
+    const categories = Object.keys(categorizedItems);
+    if (categories.length === 0) return [];
+    
+    const result = [];
+    const itemsPerCategory = Math.floor(totalLimit / categories.length);
+    const remainder = totalLimit % categories.length;
+    
+    // Get items from each category
+    categories.forEach((category, index) => {
+      const items = categorizedItems[category] || [];
+      const categoryLimit = itemsPerCategory + (index < remainder ? 1 : 0);
+      const randomItems = this.applyClientSideRandomization(items, categoryLimit);
+      result.push(...randomItems);
+    });
+    
+    // Final shuffle of the mixed results
+    return this.applyClientSideRandomization(result);
+  }
+
+  /**
+   * Generate random discovery suggestions when no specific query provided
+   * @param {Array} libraries - Available libraries
+   * @returns {Object} - Random discovery parameters
+   */
+  generateRandomDiscoveryParams(libraries = []) {
+    const currentYear = new Date().getFullYear();
+    const decades = ['1970s', '1980s', '1990s', '2000s', '2010s', '2020s'];
+    const randomDecade = decades[Math.floor(Math.random() * decades.length)];
+    
+    const discoveryPatterns = [
+      { query: `music from the ${randomDecade}`, limit: 15 },
+      { query: 'highly rated albums', rating_min: 8, limit: 12 },
+      { query: 'unheard songs', never_played: true, limit: 20 },
+      { query: 'recent additions', sort: 'addedAt', limit: 15 },
+      { query: 'forgotten favorites', play_count_min: 1, last_played_before: '2023-01-01', limit: 10 }
+    ];
+    
+    const randomPattern = discoveryPatterns[Math.floor(Math.random() * discoveryPatterns.length)];
+    return { ...randomPattern, sort: 'random' };
+  }
+
   setupToolHandlers() {
     this.server.setRequestHandler(ListToolsRequestSchema, async () => {
       return {
@@ -816,6 +965,29 @@ class PlexMCPServer {
             },
           },
           {
+            name: "discover_music",
+            description: "Natural language music discovery with smart recommendations based on your preferences and library",
+            inputSchema: {
+              type: "object",
+              properties: {
+                query: {
+                  type: "string",
+                  description: "Natural language query (e.g., 'songs from the 90s', 'rock bands I haven't heard', 'something like Modest Mouse')",
+                },
+                context: {
+                  type: "string",
+                  description: "Additional context for the search (optional)",
+                },
+                limit: {
+                  type: "number",
+                  description: "Maximum number of results to return (default: 10)",
+                  default: 10,
+                },
+              },
+              required: ["query"],
+            },
+          },
+          {
             name: "authenticate_plex",
             description: "Initiate Plex OAuth authentication flow to get user login URL",
             inputSchema: {
@@ -893,6 +1065,8 @@ class PlexMCPServer {
           return await this.handleGetLibraryStats(request.params.arguments);
         case "get_listening_stats":
           return await this.handleGetListeningStats(request.params.arguments);
+        case "discover_music":
+          return await this.handleDiscoverMusic(request.params.arguments);
         case "authenticate_plex":
           return await this.handleAuthenticatePlex(request.params.arguments);
         case "check_auth_status":
@@ -1056,6 +1230,10 @@ All stored authentication credentials have been cleared. To use Plex tools again
       added_after,
       added_before
     } = args;
+
+    // Apply randomization settings if detected
+    const enhancedArgs = this.applyRandomizationSettings(query, type, args);
+    const finalLimit = enhancedArgs.limit || limit;
     
     try {
       const plexUrl = process.env.PLEX_URL || 'https://app.plex.tv';
@@ -1065,7 +1243,7 @@ All stored authentication credentials have been cleared. To use Plex tools again
       const params = {
         query: query,
         'X-Plex-Token': plexToken,
-        limit: limit
+        limit: finalLimit
       };
 
       if (type) {
@@ -1116,11 +1294,21 @@ All stored authentication credentials have been cleared. To use Plex tools again
         file_size_max
       });
       
+      // Apply client-side randomization if detected and we have more results than requested
+      const shouldRandomize = this.detectRandomizationIntent(query);
+      if (shouldRandomize && results.length > limit) {
+        results = this.applyClientSideRandomization(results, limit);
+      }
+      
+      const resultText = shouldRandomize && results.length > 0 
+        ? `Found ${results.length} randomized results for "${query}":\n\n${this.formatResults(results)}`
+        : `Found ${results.length} results for "${query}":\n\n${this.formatResults(results)}`;
+      
       return {
         content: [
           {
             type: "text",
-            text: `Found ${results.length} results for "${query}":\n\n${this.formatResults(results)}`,
+            text: resultText,
           },
         ],
       };
@@ -1349,6 +1537,13 @@ All stored authentication credentials have been cleared. To use Plex tools again
       added_after,
       added_before
     } = args;
+
+    // Apply randomization settings if detected (for browse library, check genre as potential query)
+    const searchQuery = genre || year || 'browse';
+    const enhancedArgs = this.applyRandomizationSettings(searchQuery, null, args);
+    const finalSort = enhancedArgs.sort || sort;
+    const finalLimit = enhancedArgs.limit || limit;
+    const finalOffset = enhancedArgs.offset !== undefined ? enhancedArgs.offset : offset;
     
     try {
       const plexUrl = process.env.PLEX_URL || 'https://app.plex.tv';
@@ -1357,9 +1552,9 @@ All stored authentication credentials have been cleared. To use Plex tools again
       const libraryUrl = `${plexUrl}/library/sections/${library_id}/all`;
       const params = {
         'X-Plex-Token': plexToken,
-        sort: sort,
-        'X-Plex-Container-Start': offset,
-        'X-Plex-Container-Size': limit
+        sort: finalSort,
+        'X-Plex-Container-Start': finalOffset,
+        'X-Plex-Container-Size': finalLimit
       };
 
       if (genre) {
@@ -1414,12 +1609,20 @@ All stored authentication credentials have been cleared. To use Plex tools again
         file_size_max
       });
       
+      // Apply client-side randomization if detected and using random sort
+      const shouldRandomize = this.detectRandomizationIntent(searchQuery);
+      if (shouldRandomize && finalSort === 'random' && results.length > limit) {
+        results = this.applyClientSideRandomization(results, limit);
+      }
+      
       const totalSize = response.data.MediaContainer?.totalSize || results.length;
       
-      let resultText = `Library content (${offset + 1}-${Math.min(offset + limit, totalSize)} of ${totalSize})`;
+      let resultText = shouldRandomize && finalSort === 'random' 
+        ? `Randomized library content (${results.length} items)` 
+        : `Library content (${finalOffset + 1}-${Math.min(finalOffset + finalLimit, totalSize)} of ${totalSize})`;
       if (genre) resultText += ` | Genre: ${genre}`;
       if (year) resultText += ` | Year: ${year}`;
-      if (sort !== "titleSort") resultText += ` | Sorted by: ${sort}`;
+      if (finalSort !== "titleSort") resultText += ` | Sorted by: ${finalSort}`;
       resultText += `:\n\n${this.formatResults(results)}`;
       
       return {
@@ -2402,7 +2605,6 @@ The smart playlist has been created and is now available in your Plex library!`,
             await new Promise(resolve => setTimeout(resolve, 200));
             
           } catch (seqError) {
-            console.warn(`❌ Sequential add failed for item ${itemKey}:`, seqError.message);
             sequentialResults.push({ itemKey, success: false, error: seqError.message });
           }
         }
@@ -2471,7 +2673,6 @@ The smart playlist has been created and is now available in your Plex library!`,
         } catch (error) {
           retryCount++;
           if (retryCount > maxRetries) {
-            console.warn(`Failed to get playlist count after ${maxRetries} retries:`, error.message);
             // If all retries failed, fall back to optimistic counting
             afterCount = beforeCount + (putSuccessful ? item_keys.length : 0);
           }
@@ -4107,6 +4308,97 @@ The smart playlist has been created and is now available in your Plex library!`,
     }
   }
 
+  async handleDiscoverMusic(args) {
+    const { query, context, limit = 10 } = args;
+    
+    // Apply randomization settings for music discovery
+    const enhancedArgs = this.applyRandomizationSettings(query, 'track', args);
+    const finalLimit = enhancedArgs.limit || limit;
+    
+    try {
+      const plexUrl = process.env.PLEX_URL || 'https://app.plex.tv';
+      const plexToken = await this.authManager.getAuthToken();
+
+      // Get music libraries
+      const librariesResponse = await axios.get(`${plexUrl}/library/sections`, { 
+        params: { 'X-Plex-Token': plexToken },
+        httpsAgent: this.getHttpsAgent()
+      });
+      
+      const allLibraries = this.parseLibraries(librariesResponse.data);
+      const musicLibraries = allLibraries.filter(lib => lib.type === 'artist');
+      
+      if (musicLibraries.length === 0) {
+        throw new Error('No music libraries found.');
+      }
+
+      // Get user's listening stats for context
+      const stats = await this.calculateListeningStats(
+        musicLibraries, 
+        null, 
+        "month", 
+        false, // Don't need recommendations for this
+        plexUrl, 
+        plexToken
+      );
+
+      // Parse the natural language query
+      const discovery = await this.processNaturalLanguageQuery(
+        query, 
+        context, 
+        stats, 
+        musicLibraries, 
+        plexUrl, 
+        plexToken, 
+        finalLimit
+      );
+
+      // Apply additional randomization if needed and we have more results than requested
+      const shouldRandomize = this.detectRandomizationIntent(query);
+      if (shouldRandomize && discovery.results.length > limit) {
+        discovery.results = this.applyClientSideRandomization(discovery.results, limit);
+      }
+
+      let resultText = `🎵 **Music Discovery Results**\\n\\n`;
+      resultText += `Query: "${query}"\\n\\n`;
+      
+      if (discovery.analysis) {
+        resultText += `**What I found:** ${discovery.analysis}\\n\\n`;
+      }
+      
+      if (discovery.results.length > 0) {
+        resultText += `**Recommendations:**\\n`;
+        discovery.results.forEach((item, index) => {
+          resultText += `${index + 1}. **${item.title}** by ${item.artist}\\n`;
+          if (item.album) resultText += `   Album: ${item.album}\\n`;
+          if (item.reason) resultText += `   ${item.reason}\\n`;
+          resultText += `\\n`;
+        });
+      } else {
+        resultText += `No results found that match your query. Your library might not have what you're looking for, or try a different search.\\n`;
+      }
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: resultText,
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error with music discovery: ${error.message}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  }
+
   async calculateListeningStats(musicLibraries, accountId, timePeriod, includeRecommendations, plexUrl, plexToken) {
     const stats = {
       timePeriod,
@@ -4270,7 +4562,6 @@ The smart playlist has been created and is now available in your Plex library!`,
           }
         }
       } catch (libraryError) {
-        console.error(`Error enriching stats for library ${library.key}:`, libraryError.message);
       }
     }
   }
@@ -4283,6 +4574,9 @@ The smart playlist has been created and is now available in your Plex library!`,
       .map(([genre]) => genre);
     
     const topArtists = Object.keys(stats.topArtists).slice(0, 5);
+    
+    // Track artists we've already recommended to avoid duplicates
+    const recommendedArtists = new Set(topArtists.map(a => a.toLowerCase()));
     
     for (const library of musicLibraries) {
       try {
@@ -4358,13 +4652,449 @@ The smart playlist has been created and is now available in your Plex library!`,
             continue;
           }
         }
+        
+        // Find similar artists based on genre overlap
+        await this.findSimilarArtistRecommendations(
+          stats, 
+          library, 
+          topGenres, 
+          topArtists, 
+          recommendedArtists, 
+          plexUrl, 
+          plexToken
+        );
+        
       } catch (libraryError) {
         continue;
       }
     }
     
     // Limit recommendations to avoid overwhelming output
-    stats.recommendations = stats.recommendations.slice(0, 10);
+    stats.recommendations = stats.recommendations.slice(0, 12);
+  }
+
+  async findSimilarArtistRecommendations(stats, library, topGenres, topArtists, recommendedArtists, plexUrl, plexToken) {
+    try {
+      // Find artists in your top genres that you don't already listen to
+      for (const genre of topGenres.slice(0, 2)) {
+        try {
+          const genreArtistsResponse = await axios.get(`${plexUrl}/library/sections/${library.key}/all`, {
+            params: {
+              'X-Plex-Token': plexToken,
+              genre: genre,
+              type: 8, // Artist type
+              'X-Plex-Container-Size': 15,
+              sort: 'titleSort'
+            },
+            httpsAgent: this.getHttpsAgent()
+          });
+          
+          const artists = this.parseLibraryContent(genreArtistsResponse.data);
+          
+          // Find artists in this genre that aren't in your top artists
+          const similarArtists = artists.filter(artist => 
+            !recommendedArtists.has(artist.title.toLowerCase()) &&
+            !topArtists.some(topArtist => topArtist.toLowerCase() === artist.title.toLowerCase())
+          );
+          
+          // Get tracks from similar artists you haven't discovered yet
+          for (const artist of similarArtists.slice(0, 2)) {
+            try {
+              const artistTracksResponse = await axios.get(`${plexUrl}${artist.key}`, {
+                params: { 
+                  'X-Plex-Token': plexToken,
+                  'X-Plex-Container-Size': 5
+                },
+                httpsAgent: this.getHttpsAgent()
+              });
+              
+              const tracks = this.parseLibraryContent(artistTracksResponse.data);
+              const unplayedTracks = tracks.filter(track => !stats.topTracks[track.title]);
+              
+              if (unplayedTracks.length > 0) {
+                const recommendTrack = unplayedTracks[0];
+                
+                // Add some personality
+                let reason = `You might dig ${artist.title} - they're in the ${genre} scene`;
+                if (artist.title.toLowerCase().includes('nickelback')) {
+                  reason = `Found Nickelback in your library. We're not judging... much.`;
+                }
+                
+                stats.recommendations.push({
+                  title: recommendTrack.title,
+                  artist: artist.title,
+                  album: recommendTrack.parentTitle || 'Unknown Album',
+                  reason: reason,
+                  type: 'similar-artist',
+                  key: recommendTrack.key
+                });
+                
+                recommendedArtists.add(artist.title.toLowerCase());
+                
+                // Stop if we have enough recommendations
+                if (stats.recommendations.length >= 12) {
+                  return;
+                }
+              }
+            } catch (trackError) {
+              continue;
+            }
+          }
+        } catch (genreError) {
+          continue;
+        }
+      }
+    } catch (error) {
+      // Silently continue if similar artist discovery fails
+    }
+  }
+
+  async processNaturalLanguageQuery(query, context, stats, musicLibraries, plexUrl, plexToken, limit) {
+    const queryLower = query.toLowerCase();
+    let results = [];
+    let analysis = "";
+    
+    // Decade/year queries (like "90s songs", "music from the 2000s")
+    if (queryLower.match(/\b(90s?|1990s?|2000s?|80s?|1980s?|70s?|1970s?)\b/)) {
+      const yearMatch = queryLower.match(/\b(90s?|1990s?|2000s?|80s?|1980s?|70s?|1970s?)\b/);
+      let yearRange = {};
+      
+      if (yearMatch[1].includes('90')) {
+        yearRange = { min: 1989, max: 2000 };
+        analysis = `Looking for tracks from the 90s era...`;
+      } else if (yearMatch[1].includes('2000')) {
+        yearRange = { min: 2000, max: 2009 };
+        analysis = `Searching for 2000s music...`;
+      } else if (yearMatch[1].includes('80')) {
+        yearRange = { min: 1980, max: 1989 };
+        analysis = `Finding 80s classics...`;
+      } else if (yearMatch[1].includes('70')) {
+        yearRange = { min: 1970, max: 1979 };
+        analysis = `Digging up 70s gems...`;
+      }
+      
+      results = await this.searchByDecade(musicLibraries, yearRange, stats, plexUrl, plexToken, limit);
+      
+      if (results.length > 0) {
+        const tracksWithMeta = results.filter(r => r.hasMetadata).length;
+        const tracksWithoutMeta = results.length - tracksWithMeta;
+        
+        analysis += ` Found ${results.length} tracks`;
+        if (tracksWithoutMeta > 0) {
+          analysis += ` (${tracksWithoutMeta} tracks missing year data - they might also be from this era but I can't tell)`;
+        }
+        analysis += `.`;
+      } else {
+        analysis += ` Your library doesn't seem to have much from that decade, or the year metadata is missing.`;
+      }
+    }
+    
+    // Similar artist queries ("like X", "similar to Y") 
+    else if (queryLower.match(/\b(like|similar to|sounds like)\s+(.+)/)) {
+      const artistMatch = queryLower.match(/\b(like|similar to|sounds like)\s+(.+)/);
+      const targetArtist = artistMatch[2].trim();
+      
+      analysis = `Looking for artists similar to ${targetArtist}...`;
+      results = await this.findSimilarTo(targetArtist, musicLibraries, stats, plexUrl, plexToken, limit);
+      
+      if (results.length > 0) {
+        analysis += ` Found some artists you might dig based on genre overlap and your listening patterns.`;
+      } else {
+        analysis += ` Couldn't find similar artists. Either ${targetArtist} isn't in your library or there aren't similar artists available.`;
+      }
+    }
+    
+    // Unheard/new discovery queries
+    else if (queryLower.match(/\b(haven't heard|never played|new|discover|unplayed)\b/)) {
+      analysis = `Finding music in your library you haven't explored yet...`;
+      results = await this.findUnheardMusic(musicLibraries, stats, plexUrl, plexToken, limit);
+      
+      if (results.length > 0) {
+        analysis += ` Here are some tracks from your collection that you haven't played much (or at all).`;
+      } else {
+        analysis += ` Looks like you've been thorough with your library! Not much unplayed content found.`;
+      }
+    }
+    
+    // Genre-based queries
+    else if (queryLower.match(/\b(rock|jazz|hip hop|electronic|classical|folk|country|pop|metal|punk|indie|alternative)\b/)) {
+      const genreMatch = queryLower.match(/\b(rock|jazz|hip hop|electronic|classical|folk|country|pop|metal|punk|indie|alternative)\b/);
+      const genre = genreMatch[0];
+      
+      analysis = `Searching for ${genre} music in your library...`;
+      results = await this.searchByGenre(genre, musicLibraries, stats, plexUrl, plexToken, limit);
+      
+      if (results.length > 0) {
+        analysis += ` Found ${results.length} ${genre} tracks.`;
+        
+        // Add personality for specific genres
+        if (genre === 'rock' && results.some(r => r.artist.toLowerCase().includes('nickelback'))) {
+          analysis += ` (Yes, that includes your Nickelback collection. We see you.)`;
+        }
+      }
+    }
+    
+    // General/fallback search
+    else {
+      analysis = `Searching your library for "${query}"...`;
+      results = await this.generalSearch(query, musicLibraries, plexUrl, plexToken, limit);
+    }
+    
+    return {
+      analysis,
+      results,
+      query: query
+    };
+  }
+
+  async searchByDecade(musicLibraries, yearRange, stats, plexUrl, plexToken, limit) {
+    const results = [];
+    
+    for (const library of musicLibraries) {
+      try {
+        const response = await axios.get(`${plexUrl}/library/sections/${library.key}/all`, {
+          params: {
+            'X-Plex-Token': plexToken,
+            type: 10, // Track type
+            'year>': yearRange.min - 1,
+            'year<': yearRange.max + 1,
+            'X-Plex-Container-Size': limit * 2,
+            sort: 'random'
+          },
+          httpsAgent: this.getHttpsAgent()
+        });
+        
+        const tracks = this.parseLibraryContent(response.data);
+        
+        tracks.forEach(track => {
+          const playCount = stats.topTracks[track.title] || 0;
+          results.push({
+            title: track.title,
+            artist: track.grandparentTitle || 'Unknown Artist',
+            album: track.parentTitle || 'Unknown Album',
+            year: track.year,
+            playCount: playCount,
+            hasMetadata: !!track.year,
+            reason: `From ${yearRange.min === 1989 ? 'the 90s' : yearRange.min + 's'} - played ${playCount} times`,
+            key: track.key
+          });
+        });
+        
+        if (results.length >= limit) break;
+      } catch (error) {
+        continue;
+      }
+    }
+    
+    return results.slice(0, limit);
+  }
+
+  async findSimilarTo(targetArtist, musicLibraries, stats, plexUrl, plexToken, limit) {
+    const results = [];
+    
+    // First, find the target artist's genre(s)
+    let targetGenres = [];
+    
+    for (const library of musicLibraries) {
+      try {
+        const artistResponse = await axios.get(`${plexUrl}/library/sections/${library.key}/search`, {
+          params: {
+            'X-Plex-Token': plexToken,
+            query: targetArtist,
+            type: 8 // Artist type
+          },
+          httpsAgent: this.getHttpsAgent()
+        });
+        
+        const artists = this.parseSearchResults(artistResponse.data);
+        if (artists.length > 0) {
+          // Get artist details to find genres
+          const artistDetailResponse = await axios.get(`${plexUrl}${artists[0].key}`, {
+            params: { 'X-Plex-Token': plexToken },
+            httpsAgent: this.getHttpsAgent()
+          });
+          
+          const artistData = this.parseLibraryContent(artistDetailResponse.data);
+          // Extract genres from artist metadata (this might need adjustment based on actual Plex API response)
+          if (artistData.genre) {
+            targetGenres = Array.isArray(artistData.genre) ? artistData.genre : [artistData.genre];
+          }
+          break;
+        }
+      } catch (error) {
+        continue;
+      }
+    }
+    
+    // If we found genres, search for other artists in those genres
+    if (targetGenres.length > 0) {
+      return await this.findSimilarArtistsByGenre(targetGenres, targetArtist, musicLibraries, stats, plexUrl, plexToken, limit);
+    }
+    
+    return results;
+  }
+
+  async findSimilarArtistsByGenre(genres, excludeArtist, musicLibraries, stats, plexUrl, plexToken, limit) {
+    const results = [];
+    const seenArtists = new Set([excludeArtist.toLowerCase()]);
+    
+    for (const genre of genres.slice(0, 2)) {
+      for (const library of musicLibraries) {
+        try {
+          const response = await axios.get(`${plexUrl}/library/sections/${library.key}/all`, {
+            params: {
+              'X-Plex-Token': plexToken,
+              genre: genre,
+              type: 10, // Track type
+              'X-Plex-Container-Size': 20,
+              sort: 'random'
+            },
+            httpsAgent: this.getHttpsAgent()
+          });
+          
+          const tracks = this.parseLibraryContent(response.data);
+          
+          tracks.forEach(track => {
+            const artist = track.grandparentTitle || 'Unknown Artist';
+            if (!seenArtists.has(artist.toLowerCase())) {
+              const playCount = stats.topTracks[track.title] || 0;
+              
+              results.push({
+                title: track.title,
+                artist: artist,
+                album: track.parentTitle || 'Unknown Album',
+                playCount: playCount,
+                reason: `Similar to ${excludeArtist} (both in ${genre})`,
+                key: track.key
+              });
+              
+              seenArtists.add(artist.toLowerCase());
+              
+              if (results.length >= limit) return;
+            }
+          });
+        } catch (error) {
+          continue;
+        }
+      }
+    }
+    
+    return results.slice(0, limit);
+  }
+
+  async findUnheardMusic(musicLibraries, stats, plexUrl, plexToken, limit) {
+    const results = [];
+    
+    for (const library of musicLibraries) {
+      try {
+        const response = await axios.get(`${plexUrl}/library/sections/${library.key}/all`, {
+          params: {
+            'X-Plex-Token': plexToken,
+            type: 10, // Track type
+            'X-Plex-Container-Size': limit * 3,
+            sort: 'random'
+          },
+          httpsAgent: this.getHttpsAgent()
+        });
+        
+        const tracks = this.parseLibraryContent(response.data);
+        
+        tracks.forEach(track => {
+          const playCount = stats.topTracks[track.title] || 0;
+          if (playCount === 0) {
+            results.push({
+              title: track.title,
+              artist: track.grandparentTitle || 'Unknown Artist',
+              album: track.parentTitle || 'Unknown Album',
+              playCount: 0,
+              reason: `Never played - time to discover something new!`,
+              key: track.key
+            });
+          }
+        });
+        
+        if (results.length >= limit) break;
+      } catch (error) {
+        continue;
+      }
+    }
+    
+    return results.slice(0, limit);
+  }
+
+  async searchByGenre(genre, musicLibraries, stats, plexUrl, plexToken, limit) {
+    const results = [];
+    
+    for (const library of musicLibraries) {
+      try {
+        const response = await axios.get(`${plexUrl}/library/sections/${library.key}/all`, {
+          params: {
+            'X-Plex-Token': plexToken,
+            genre: genre,
+            type: 10, // Track type
+            'X-Plex-Container-Size': limit,
+            sort: 'random'
+          },
+          httpsAgent: this.getHttpsAgent()
+        });
+        
+        const tracks = this.parseLibraryContent(response.data);
+        
+        tracks.forEach(track => {
+          const playCount = stats.topTracks[track.title] || 0;
+          results.push({
+            title: track.title,
+            artist: track.grandparentTitle || 'Unknown Artist',
+            album: track.parentTitle || 'Unknown Album',
+            playCount: playCount,
+            reason: `${genre.charAt(0).toUpperCase() + genre.slice(1)} track - played ${playCount} times`,
+            key: track.key
+          });
+        });
+        
+        if (results.length >= limit) break;
+      } catch (error) {
+        continue;
+      }
+    }
+    
+    return results.slice(0, limit);
+  }
+
+  async generalSearch(query, musicLibraries, plexUrl, plexToken, limit) {
+    const results = [];
+    
+    for (const library of musicLibraries) {
+      try {
+        const response = await axios.get(`${plexUrl}/library/sections/${library.key}/search`, {
+          params: {
+            'X-Plex-Token': plexToken,
+            query: query,
+            type: 10, // Track type
+            'X-Plex-Container-Size': limit
+          },
+          httpsAgent: this.getHttpsAgent()
+        });
+        
+        const tracks = this.parseSearchResults(response.data);
+        
+        tracks.forEach(track => {
+          results.push({
+            title: track.title,
+            artist: track.artist || 'Unknown Artist',
+            album: track.album || 'Unknown Album',
+            reason: `Matches "${query}"`,
+            key: track.key
+          });
+        });
+        
+        if (results.length >= limit) break;
+      } catch (error) {
+        continue;
+      }
+    }
+    
+    return results.slice(0, limit);
   }
 
   formatListeningStats(stats, includeRecommendations) {
