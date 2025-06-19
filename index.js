@@ -1239,7 +1239,7 @@ All stored authentication credentials have been cleared. To use Plex tools again
       const plexUrl = process.env.PLEX_URL || 'https://app.plex.tv';
       const plexToken = await this.authManager.getAuthToken();
 
-      const searchUrl = `${plexUrl}/search`;
+      const searchUrl = `${plexUrl}/hubs/search`;
       const params = {
         query: query,
         'X-Plex-Token': plexToken,
@@ -1338,11 +1338,30 @@ All stored authentication credentials have been cleared. To use Plex tools again
   }
 
   parseSearchResults(data) {
-    if (!data.MediaContainer || !data.MediaContainer.Metadata) {
+    if (!data.MediaContainer) {
       return [];
     }
 
-    return data.MediaContainer.Metadata.map(item => ({
+    // Handle both /search and /hubs/search response formats
+    let allResults = [];
+
+    // For /hubs/search response format (contains Hub elements)
+    if (data.MediaContainer.Hub) {
+      const hubs = Array.isArray(data.MediaContainer.Hub) ? data.MediaContainer.Hub : [data.MediaContainer.Hub];
+      
+      for (const hub of hubs) {
+        if (hub.Metadata) {
+          const hubResults = Array.isArray(hub.Metadata) ? hub.Metadata : [hub.Metadata];
+          allResults = allResults.concat(hubResults);
+        }
+      }
+    }
+    // For /search response format (direct Metadata array)
+    else if (data.MediaContainer.Metadata) {
+      allResults = Array.isArray(data.MediaContainer.Metadata) ? data.MediaContainer.Metadata : [data.MediaContainer.Metadata];
+    }
+
+    return allResults.map(item => ({
       title: item.title,
       type: item.type,
       year: item.year,

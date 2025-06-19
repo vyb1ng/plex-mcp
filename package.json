@@ -40,14 +40,14 @@
   "homepage": "https://github.com/vyb1ng/plex-mcp#readme",
   "type": "commonjs",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.12.3",
+    "@modelcontextprotocol/sdk": "^1.13.0",
     "axios": "^1.10.0",
     "plex-oauth": "^2.1.0"
   },
   "devDependencies": {
     "@types/jest": "^30.0.0",
     "axios-mock-adapter": "^2.1.0",
-    "jest": "^30.0.0"
+    "jest": "^30.0.2"
   },
   "overrides": {
     "plex-oauth": {
