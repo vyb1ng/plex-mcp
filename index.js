@@ -5243,7 +5243,7 @@ The smart playlist has been created and is now available in your Plex library!`,
     app.use(cors({
       origin: '*',
       methods: ['GET', 'POST', 'OPTIONS'],
-      allowedHeaders: ['Content-Type', 'Authorization'],
+      allowedHeaders: ['Content-Type', 'Authorization', 'Cache-Control'],
       credentials: false
     }));
 
@@ -5252,24 +5252,18 @@ The smart playlist has been created and is now available in your Plex library!`,
       res.json({ status: 'ok', service: 'plex-mcp-sse-server' });
     });
 
-    // SSE endpoint for MCP communication
+    // SSE endpoint for MCP communication - let transport handle headers
     app.get('/sse', async (req, res) => {
       try {
-        console.error('SSE connection established');
+        console.error('SSE connection request received');
         
-        // Set SSE headers
-        res.writeHead(200, {
-          'Content-Type': 'text/event-stream',
-          'Cache-Control': 'no-cache',
-          'Connection': 'keep-alive',
-          'Access-Control-Allow-Origin': '*',
-          'Access-Control-Allow-Headers': 'Cache-Control'
-        });
-
-        // Create SSE transport
+        // Create SSE transport - it will handle all headers and setup
         const transport = new SSEServerTransport('/sse', res);
+        
+        console.error('Connecting MCP server to SSE transport');
         await this.server.connect(transport);
-
+        console.error('SSE transport connected successfully');
+        
         // Handle client disconnect
         req.on('close', () => {
           console.error('SSE connection closed');
@@ -5277,7 +5271,9 @@ The smart playlist has been created and is now available in your Plex library!`,
 
       } catch (error) {
         console.error('Error in SSE endpoint:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        if (!res.headersSent) {
+          res.status(500).json({ error: 'Internal server error', details: error.message });
+        }
       }
     });
 
