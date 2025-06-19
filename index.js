@@ -157,14 +157,128 @@ class PlexMCPServer {
     );
 
     this.authManager = new PlexAuthManager();
+    this.connectionVerified = false;
     this.setupToolHandlers();
+  }
+
+  async verifyConnection() {
+    try {
+      const plexUrl = process.env.PLEX_URL || 'https://app.plex.tv';
+      const plexToken = await this.authManager.getAuthToken();
+
+      if (!plexToken) {
+        return {
+          verified: false,
+          error: 'No authentication token available. Please authenticate first.',
+          needsAuth: true
+        };
+      }
+
+      // Test basic connectivity with identity endpoint
+      const identityUrl = `${plexUrl}/identity`;
+      const response = await axios.get(identityUrl, {
+        params: { 'X-Plex-Token': plexToken },
+        httpsAgent: this.getHttpsAgent(),
+        timeout: 10000
+      });
+
+      if (response.status === 200) {
+        this.connectionVerified = true;
+        return {
+          verified: true,
+          server: response.data?.MediaContainer?.machineIdentifier || 'Unknown',
+          url: plexUrl
+        };
+      }
+
+      return {
+        verified: false,
+        error: `Server responded with status ${response.status}`,
+        needsAuth: false
+      };
+
+    } catch (error) {
+      let errorMessage = error.message;
+      let needsAuth = false;
+
+      if (error.response?.status === 401) {
+        errorMessage = 'Authentication failed. Token may be expired.';
+        needsAuth = true;
+      } else if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND' || error.code === 'ETIMEDOUT') {
+        errorMessage = `Cannot connect to Plex server at ${process.env.PLEX_URL || 'https://app.plex.tv'}. Check network connectivity and server URL.`;
+      }
+
+      return {
+        verified: false,
+        error: errorMessage,
+        needsAuth: needsAuth
+      };
+    }
+  }
+
+  async ensureConnection() {
+    if (this.connectionVerified) {
+      return { success: true };
+    }
+
+    const verification = await this.verifyConnection();
+    
+    if (!verification.verified) {
+      const errorContent = verification.needsAuth 
+        ? `🔑 **Authentication Required**
+
+${verification.error}
+
+Please run \`check_auth_status\` and follow the authentication process.`
+        : `❌ **Connection Failed**
+
+${verification.error}
+
+**Troubleshooting:**
+- Verify PLEX_URL is correct and accessible
+- Check if server is running and reachable
+- Ensure network connectivity`;
+
+      return {
+        success: false,
+        response: {
+          content: [
+            {
+              type: "text",
+              text: errorContent,
+            },
+          ],
+          isError: true,
+        }
+      };
+    }
+
+    return { success: true };
   }
 
   getHttpsAgent() {
     const verifySSL = process.env.PLEX_VERIFY_SSL !== 'false';
-    return new (require('https').Agent)({
+    const https = require('https');
+    
+    return new https.Agent({
       rejectUnauthorized: verifySSL,
-      minVersion: 'TLSv1.2'
+      minVersion: 'TLSv1.2',
+      checkServerIdentity: (hostname, cert) => {
+        // Always trust publicly verifiable certificates for *.*.plex.direct domains
+        if (hostname.match(/^[^.]+\.[^.]+\.plex\.direct$/)) {
+          // Let Node.js perform standard certificate verification
+          // This allows publicly trusted certificates to work
+          return undefined;
+        }
+        
+        // For non-plex.direct domains, use default behavior
+        if (verifySSL) {
+          return https.globalAgent.options.checkServerIdentity(hostname, cert);
+        }
+        
+        // If SSL verification is disabled, skip all checks
+        return undefined;
+      }
     });
   }
 
@@ -1126,6 +1240,7 @@ ${loginUrl.replace(/\[/g, '%5B').replace(/\]/g, '%5D').replace(/!/g, '%21')}
       const authToken = await this.authManager.checkAuthToken(pin_id);
       
       if (authToken) {
+        this.connectionVerified = false; // Reset so next tool use will verify the new token
         return {
           content: [
             {
@@ -1172,6 +1287,7 @@ You can run check_auth_status again to check if authentication is complete.`
   async handleClearAuth(args) {
     try {
       await this.authManager.clearAuth();
+      this.connectionVerified = false; // Reset connection verification
       
       return {
         content: [
@@ -1200,6 +1316,12 @@ All stored authentication credentials have been cleared. To use Plex tools again
   }
 
   async handlePlexSearch(args) {
+    // Verify connection before proceeding
+    const connectionCheck = await this.ensureConnection();
+    if (!connectionCheck.success) {
+      return connectionCheck.response;
+    }
+
     const { 
       query, 
       type, 
@@ -1445,6 +1567,12 @@ All stored authentication credentials have been cleared. To use Plex tools again
   }
 
   async handleBrowseLibraries(args) {
+    // Verify connection before proceeding
+    const connectionCheck = await this.ensureConnection();
+    if (!connectionCheck.success) {
+      return connectionCheck.response;
+    }
+
     try {
       const plexUrl = process.env.PLEX_URL || 'https://app.plex.tv';
       const plexToken = await this.authManager.getAuthToken();
