@@ -12,7 +12,7 @@ describe('Parser Functions', () => {
   let server;
 
   beforeEach(() => {
-    server = new PlexMCPServer();
+    server = new PlexMCPServer({ axios: require('axios').create() });
   });
 
   describe('parseSearchResults', () => {
