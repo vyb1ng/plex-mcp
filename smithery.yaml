@@ -15,6 +15,7 @@ startCommand:
         PLEX_URL: config.plexUrl, 
         PLEX_TOKEN: config.plexToken, 
         PLEX_VERIFY_SSL: config.plexVerifySsl.toString(),
+        MCP_HTTP_DEBUG: 'true',
         PORT: '3000'
       }
     })
@@ -51,6 +52,7 @@ alternativeCommands:
         env: {
           PLEX_URL: config.plexUrl, 
           PLEX_TOKEN: config.plexToken, 
-          PLEX_VERIFY_SSL: config.plexVerifySsl.toString()
+          PLEX_VERIFY_SSL: config.plexVerifySsl.toString(),
+          MCP_HTTP_DEBUG: 'true'
         }
       })
