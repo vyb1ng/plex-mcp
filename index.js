@@ -296,7 +296,7 @@ ${verification.error}
         const certSubject = cert.subject?.CN || '';
         const certSANs = cert.subjectaltname || '';
         const isPlexDirectCert = certSubject.includes('plex.direct') || certSANs.includes('plex.direct');
-        
+
         if (isPlexDirectCert && !verifySSL) {
           // Allow plex.direct certificates when SSL verification is disabled
           return undefined;
