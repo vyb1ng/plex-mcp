@@ -217,7 +217,7 @@ describe('Advanced Filters', () => {
         ...mockResults
       ];
 
-      // When filtering by resolution, items without Media are excluded  
+      // When filtering by resolution, items without Media are excluded
       const resolutionFiltered = server.applyAdvancedFilters(resultsWithoutMedia, {
         resolution: '1080'
       });
@@ -249,6 +249,139 @@ describe('Advanced Filters', () => {
 
       expect(filtered).toHaveLength(1);
       expect(filtered[0].title).toBe('R-Rated Movie');
+    });
+
+    // Audio Analysis Filter Tests
+    describe('Audio Analysis Filters', () => {
+      const mockMusicTracks = [
+        {
+          title: 'Energetic Dance Track',
+          genre: 'Electronic Dance',
+          tempo: 128,
+          mood: 'energetic',
+          acousticRatio: 0.2,
+          dynamicRange: 12,
+          loudness: -8,
+          key: 'Am',
+          Media: [{ audioCodec: 'flac', bitrate: 1411 }]
+        },
+        {
+          title: 'Calm Acoustic Song',
+          genre: 'Folk Acoustic',
+          tempo: 75,
+          mood: 'calm',
+          acousticRatio: 0.9,
+          dynamicRange: 18,
+          loudness: -12,
+          key: 'C',
+          Media: [{ audioCodec: 'flac', bitrate: 1411 }]
+        },
+        {
+          title: 'Fast Rock Track',
+          genre: 'Rock',
+          tempo: 160,
+          mood: 'aggressive',
+          acousticRatio: 0.4,
+          dynamicRange: 15,
+          loudness: -6,
+          key: 'Em',
+          Media: [{ audioCodec: 'mp3', bitrate: 320 }]
+        }
+      ];
+
+      it('should filter by BPM range', () => {
+        const slowTracks = server.applyAdvancedFilters(mockMusicTracks, {
+          bpm_max: 100
+        });
+        expect(slowTracks).toHaveLength(1);
+        expect(slowTracks[0].title).toBe('Calm Acoustic Song');
+
+        const fastTracks = server.applyAdvancedFilters(mockMusicTracks, {
+          bpm_min: 120
+        });
+        expect(fastTracks).toHaveLength(2);
+        expect(fastTracks.map(t => t.title)).toContain('Energetic Dance Track');
+        expect(fastTracks.map(t => t.title)).toContain('Fast Rock Track');
+      });
+
+      it('should filter by musical key', () => {
+        const cKeyTracks = server.applyAdvancedFilters(mockMusicTracks, {
+          musical_key: 'C'
+        });
+        expect(cKeyTracks).toHaveLength(1);
+        expect(cKeyTracks[0].title).toBe('Calm Acoustic Song');
+      });
+
+      it('should filter by mood', () => {
+        const energeticTracks = server.applyAdvancedFilters(mockMusicTracks, {
+          mood: 'energetic'
+        });
+        expect(energeticTracks).toHaveLength(1);
+        expect(energeticTracks[0].title).toBe('Energetic Dance Track');
+
+        const calmTracks = server.applyAdvancedFilters(mockMusicTracks, {
+          mood: 'calm'
+        });
+        expect(calmTracks).toHaveLength(1);
+        expect(calmTracks[0].title).toBe('Calm Acoustic Song');
+      });
+
+      it('should filter by acoustic ratio', () => {
+        const acousticTracks = server.applyAdvancedFilters(mockMusicTracks, {
+          acoustic_ratio_min: 0.8
+        });
+        expect(acousticTracks).toHaveLength(1);
+        expect(acousticTracks[0].title).toBe('Calm Acoustic Song');
+
+        const electronicTracks = server.applyAdvancedFilters(mockMusicTracks, {
+          acoustic_ratio_max: 0.3
+        });
+        expect(electronicTracks).toHaveLength(1);
+        expect(electronicTracks[0].title).toBe('Energetic Dance Track');
+      });
+
+      it('should filter by dynamic range', () => {
+        const highDRTracks = server.applyAdvancedFilters(mockMusicTracks, {
+          dynamic_range_min: 16
+        });
+        expect(highDRTracks).toHaveLength(1);
+        expect(highDRTracks[0].title).toBe('Calm Acoustic Song');
+      });
+
+      it('should filter by loudness (LUFS)', () => {
+        const loudTracks = server.applyAdvancedFilters(mockMusicTracks, {
+          loudness_max: -10
+        });
+        expect(loudTracks).toHaveLength(1);
+        expect(loudTracks[0].title).toBe('Calm Acoustic Song');
+      });
+
+      it('should handle combined audio analysis filters', () => {
+        const filtered = server.applyAdvancedFilters(mockMusicTracks, {
+          bpm_min: 120,
+          mood: 'energetic',
+          acoustic_ratio_max: 0.5
+        });
+        expect(filtered).toHaveLength(1);
+        expect(filtered[0].title).toBe('Energetic Dance Track');
+      });
+
+      it('should return all tracks when audio analysis data is missing', () => {
+        // Test that filters don't exclude tracks when analysis data is unavailable
+        // (current placeholder implementation)
+        const tracksWithoutAnalysis = [
+          {
+            title: 'Track Without Analysis',
+            Media: [{ audioCodec: 'mp3' }]
+          }
+        ];
+
+        const filtered = server.applyAdvancedFilters(tracksWithoutAnalysis, {
+          bpm_min: 120,
+          mood: 'energetic'
+        });
+        expect(filtered).toHaveLength(1);
+      });
     });
 
     it('should handle edge case with exact resolution match', () => {

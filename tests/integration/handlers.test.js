@@ -1,9 +1,9 @@
 const PlexMCPServer = require('../../index.js');
 const axios = require('axios');
 const MockAdapter = require('axios-mock-adapter');
-const { 
-  mockSearchResponse, 
-  mockLibrariesResponse, 
+const {
+  mockSearchResponse,
+  mockLibrariesResponse,
   mockPlaylistsResponse,
   mockWatchHistoryResponse,
   mockOnDeckResponse,
@@ -27,7 +27,7 @@ describe('Handler Integration Tests', () => {
   });
 
   describe('handlePlexSearch', () => {
-    it('should handle successful search', async () => {
+    it('should handle successful search', async() => {
       mockAxios.onGet().reply(200, mockSearchResponse);
 
       const result = await server.handlePlexSearch({
@@ -40,7 +40,7 @@ describe('Handler Integration Tests', () => {
       expect(result.content[0].text).toContain('Test Movie');
     });
 
-    it('should handle search with type filter', async () => {
+    it('should handle search with type filter', async() => {
       mockAxios.onGet().reply(200, mockSearchResponse);
 
       const result = await server.handlePlexSearch({
@@ -52,7 +52,7 @@ describe('Handler Integration Tests', () => {
       expect(result.content[0].text).toContain('Found 2 results');
     });
 
-    it('should handle empty search results', async () => {
+    it('should handle empty search results', async() => {
       mockAxios.onGet().reply(200, mockEmptyResponse);
 
       const result = await server.handlePlexSearch({
@@ -62,7 +62,7 @@ describe('Handler Integration Tests', () => {
       expect(result.content[0].text).toContain('Found 0 results');
     });
 
-    it('should handle missing PLEX_TOKEN', async () => {
+    it('should handle missing PLEX_TOKEN', async() => {
       const originalToken = process.env.PLEX_TOKEN;
       delete process.env.PLEX_TOKEN;
       mockAxios.onGet().reply(404, 'Not Found');
@@ -77,7 +77,7 @@ describe('Handler Integration Tests', () => {
       process.env.PLEX_TOKEN = originalToken;
     });
 
-    it('should handle API errors', async () => {
+    it('should handle API errors', async() => {
       mockAxios.onGet().reply(401, mockErrorResponse);
 
       const result = await server.handlePlexSearch({
@@ -90,7 +90,7 @@ describe('Handler Integration Tests', () => {
   });
 
   describe('handleBrowseLibraries', () => {
-    it('should handle successful library browsing', async () => {
+    it('should handle successful library browsing', async() => {
       mockAxios.onGet().reply(200, mockLibrariesResponse);
 
       const result = await server.handleBrowseLibraries({});
@@ -101,7 +101,7 @@ describe('Handler Integration Tests', () => {
       expect(result.content[0].text).toContain('**Music** (artist)');
     });
 
-    it('should handle API errors', async () => {
+    it('should handle API errors', async() => {
       mockAxios.onGet().reply(500, { error: 'Server error' });
 
       const result = await server.handleBrowseLibraries({});
@@ -112,7 +112,7 @@ describe('Handler Integration Tests', () => {
   });
 
   describe('handleBrowseLibrary', () => {
-    it('should handle successful library content browsing', async () => {
+    it('should handle successful library content browsing', async() => {
       mockAxios.onGet().reply(200, mockSearchResponse);
 
       const result = await server.handleBrowseLibrary({
@@ -125,7 +125,7 @@ describe('Handler Integration Tests', () => {
       expect(result.content[0].text).toContain('Test Movie');
     });
 
-    it('should handle browsing with filters', async () => {
+    it('should handle browsing with filters', async() => {
       mockAxios.onGet().reply(200, mockSearchResponse);
 
       const result = await server.handleBrowseLibrary({
@@ -142,7 +142,7 @@ describe('Handler Integration Tests', () => {
   });
 
   describe('handleRecentlyAdded', () => {
-    it('should handle recently added for all libraries', async () => {
+    it('should handle recently added for all libraries', async() => {
       mockAxios.onGet().reply(200, mockSearchResponse);
 
       const result = await server.handleRecentlyAdded({
@@ -153,7 +153,7 @@ describe('Handler Integration Tests', () => {
       expect(result.content[0].text).toContain('(showing 1-2 of 2 items)');
     });
 
-    it('should handle recently added for specific library', async () => {
+    it('should handle recently added for specific library', async() => {
       mockAxios.onGet().reply(200, mockSearchResponse);
 
       const result = await server.handleRecentlyAdded({
@@ -166,7 +166,7 @@ describe('Handler Integration Tests', () => {
   });
 
   describe('handleWatchHistory', () => {
-    it('should handle watch history successfully', async () => {
+    it('should handle watch history successfully', async() => {
       mockAxios.onGet().reply(200, mockWatchHistoryResponse);
 
       const result = await server.handleWatchHistory({
@@ -178,7 +178,7 @@ describe('Handler Integration Tests', () => {
       expect(result.content[0].text).toContain('Test TV Show');
     });
 
-    it('should handle watch history for specific account', async () => {
+    it('should handle watch history for specific account', async() => {
       mockAxios.onGet().reply(200, mockWatchHistoryResponse);
 
       const result = await server.handleWatchHistory({
@@ -191,7 +191,7 @@ describe('Handler Integration Tests', () => {
   });
 
   describe('handleOnDeck', () => {
-    it('should handle on deck items successfully', async () => {
+    it('should handle on deck items successfully', async() => {
       mockAxios.onGet().reply(200, mockOnDeckResponse);
 
       const result = await server.handleOnDeck({
@@ -205,7 +205,7 @@ describe('Handler Integration Tests', () => {
   });
 
   describe('handleListPlaylists', () => {
-    it('should handle playlist listing successfully', async () => {
+    it('should handle playlist listing successfully', async() => {
       mockAxios.onGet().reply(200, mockPlaylistsResponse);
 
       const result = await server.handleListPlaylists({});
@@ -215,7 +215,7 @@ describe('Handler Integration Tests', () => {
       expect(result.content[0].text).toContain('Favorite Movies');
     });
 
-    it('should handle playlist filtering by type', async () => {
+    it('should handle playlist filtering by type', async() => {
       mockAxios.onGet().reply(200, mockPlaylistsResponse);
 
       const result = await server.handleListPlaylists({
@@ -227,7 +227,7 @@ describe('Handler Integration Tests', () => {
   });
 
   describe('handleCreatePlaylist', () => {
-    it('should handle playlist creation successfully', async () => {
+    it('should handle playlist creation successfully', async() => {
       const createResponse = {
         MediaContainer: {
           Metadata: [
@@ -252,7 +252,7 @@ describe('Handler Integration Tests', () => {
       expect(result.content[0].text).toContain('Type: audio');
     });
 
-    it.skip('should handle smart playlist creation (disabled feature)', async () => {
+    it.skip('should handle smart playlist creation (disabled feature)', async() => {
       mockAxios.onGet().reply(200, { MediaContainer: { machineIdentifier: 'test' } });
       mockAxios.onPost().reply(200, { MediaContainer: { Metadata: [{}] } });
 
@@ -267,7 +267,7 @@ describe('Handler Integration Tests', () => {
   });
 
   describe('handleAddToPlaylist', () => {
-    it('should handle adding items to playlist', async () => {
+    it('should handle adding items to playlist', async() => {
       // Mock playlist info endpoint
       const mockPlaylistInfo = {
         MediaContainer: {
@@ -277,7 +277,7 @@ describe('Handler Integration Tests', () => {
           }]
         }
       };
-      
+
       // Mock playlist items endpoints (before and after)
       const mockPlaylistItemsBefore = {
         MediaContainer: {
@@ -285,27 +285,27 @@ describe('Handler Integration Tests', () => {
           Metadata: [{ title: 'Item 1' }, { title: 'Item 2' }] // 2 existing items
         }
       };
-      
+
       const mockPlaylistItemsAfter = {
         MediaContainer: {
           totalSize: 5,
           Metadata: [
-            { title: 'Item 1' }, 
-            { title: 'Item 2' }, 
-            { title: 'Item 3' }, 
-            { title: 'Item 4' }, 
+            { title: 'Item 1' },
+            { title: 'Item 2' },
+            { title: 'Item 3' },
+            { title: 'Item 4' },
             { title: 'Item 5' }
           ] // 5 items after adding 3
         }
       };
-      
+
       // Mock server info endpoint for machine identifier
       const mockServerInfo = {
         MediaContainer: {
           machineIdentifier: 'test-machine-123'
         }
       };
-      
+
       mockAxios.onGet(new RegExp('/$')).reply(200, mockServerInfo);
       mockAxios.onGet(new RegExp('/playlists/pl123$')).reply(200, mockPlaylistInfo);
       mockAxios.onGet(new RegExp('/playlists/pl123/items')).replyOnce(200, mockPlaylistItemsBefore);
@@ -322,7 +322,7 @@ describe('Handler Integration Tests', () => {
       expect(result.content[0].text).toContain('All items added successfully');
     });
 
-    it('should handle adding duplicate items (successful API call, no count change)', async () => {
+    it('should handle adding duplicate items (successful API call, no count change)', async() => {
       // Mock playlist info endpoint
       const mockPlaylistInfo = {
         MediaContainer: {
@@ -332,7 +332,7 @@ describe('Handler Integration Tests', () => {
           }]
         }
       };
-      
+
       // Mock playlist items endpoints (same count before and after - duplicates)
       const mockPlaylistItems = {
         MediaContainer: {
@@ -340,14 +340,14 @@ describe('Handler Integration Tests', () => {
           Metadata: [{ title: 'Item 1' }, { title: 'Item 2' }] // Same count
         }
       };
-      
+
       // Mock server info endpoint for machine identifier
       const mockServerInfo = {
         MediaContainer: {
           machineIdentifier: 'test-machine-123'
         }
       };
-      
+
       mockAxios.onGet(new RegExp('/$')).reply(200, mockServerInfo);
       mockAxios.onGet(new RegExp('/playlists/pl123$')).reply(200, mockPlaylistInfo);
       mockAxios.onGet(new RegExp('/playlists/pl123/items')).reply(200, mockPlaylistItems);
@@ -366,7 +366,7 @@ describe('Handler Integration Tests', () => {
   });
 
   describe('handleRemoveFromPlaylist', () => {
-    it('should handle removing items from playlist', async () => {
+    it('should handle removing items from playlist', async() => {
       // Mock playlist info endpoint
       const mockPlaylistInfo = {
         MediaContainer: {
@@ -376,33 +376,33 @@ describe('Handler Integration Tests', () => {
           }]
         }
       };
-      
+
       // Mock playlist items endpoints (before and after)
       const mockPlaylistItemsBefore = {
         MediaContainer: {
           totalSize: 3,
           Metadata: [
-            { title: 'Item 1', ratingKey: 'item1' }, 
-            { title: 'Item 2', ratingKey: 'item2' }, 
+            { title: 'Item 1', ratingKey: 'item1' },
+            { title: 'Item 2', ratingKey: 'item2' },
             { title: 'Item 3', ratingKey: 'item3' }
           ] // 3 existing items
         }
       };
-      
+
       const mockPlaylistItemsAfter = {
         MediaContainer: {
           totalSize: 1,
           Metadata: [{ title: 'Item 3', ratingKey: 'item3' }] // 1 item after removing 2
         }
       };
-      
+
       // Mock server info endpoint for machine identifier
       const mockServerInfo = {
         MediaContainer: {
           machineIdentifier: 'test-machine-123'
         }
       };
-      
+
       mockAxios.onGet(new RegExp('/$')).reply(200, mockServerInfo);
       mockAxios.onGet(new RegExp('/playlists/pl123$')).reply(200, mockPlaylistInfo);
       mockAxios.onGet(new RegExp('/playlists/pl123/items')).replyOnce(200, mockPlaylistItemsBefore);
@@ -419,7 +419,7 @@ describe('Handler Integration Tests', () => {
       expect(result.content[0].text).toContain('All items removed successfully');
     });
 
-    it('should handle removing non-existent items (successful API call, no count change)', async () => {
+    it('should handle removing non-existent items (successful API call, no count change)', async() => {
       // Mock playlist info endpoint
       const mockPlaylistInfo = {
         MediaContainer: {
@@ -429,26 +429,26 @@ describe('Handler Integration Tests', () => {
           }]
         }
       };
-      
+
       // Mock playlist items endpoints (same count before and after - items don't exist)
       const mockPlaylistItems = {
         MediaContainer: {
           totalSize: 3,
           Metadata: [
-            { title: 'Item 1', ratingKey: 'item1' }, 
-            { title: 'Item 2', ratingKey: 'item2' }, 
+            { title: 'Item 1', ratingKey: 'item1' },
+            { title: 'Item 2', ratingKey: 'item2' },
             { title: 'Item 3', ratingKey: 'item3' }
           ] // Items with different keys than what we're trying to remove (item999, item888)
         }
       };
-      
+
       // Mock server info endpoint for machine identifier
       const mockServerInfo = {
         MediaContainer: {
           machineIdentifier: 'test-machine-123'
         }
       };
-      
+
       mockAxios.onGet(new RegExp('/$')).reply(200, mockServerInfo);
       mockAxios.onGet(new RegExp('/playlists/pl123$')).reply(200, mockPlaylistInfo);
       mockAxios.onGet(new RegExp('/playlists/pl123/items')).reply(200, mockPlaylistItems);
@@ -465,7 +465,7 @@ describe('Handler Integration Tests', () => {
   });
 
   describe('handleDeletePlaylist', () => {
-    it('should handle playlist deletion', async () => {
+    it('should handle playlist deletion', async() => {
       mockAxios.onDelete().reply(200, {});
 
       const result = await server.handleDeletePlaylist({
@@ -477,7 +477,7 @@ describe('Handler Integration Tests', () => {
   });
 
   describe('handleWatchedStatus', () => {
-    it('should handle single item status check', async () => {
+    it('should handle single item status check', async() => {
       const statusResponse = {
         MediaContainer: {
           Metadata: [
@@ -504,7 +504,7 @@ describe('Handler Integration Tests', () => {
       expect(result.content[0].text).toContain('Status: ✅ Watched');
     });
 
-    it('should handle multiple items with mixed status', async () => {
+    it('should handle multiple items with mixed status', async() => {
       let callCount = 0;
       mockAxios.onGet().reply(() => {
         callCount++;
@@ -543,7 +543,7 @@ describe('Handler Integration Tests', () => {
       expect(result.content[0].text).toContain('Status: ⏸️ In Progress');
     });
 
-    it('should handle items not found', async () => {
+    it('should handle items not found', async() => {
       mockAxios.onGet().reply(404, { error: 'Not found' });
 
       const result = await server.handleWatchedStatus({
@@ -555,7 +555,7 @@ describe('Handler Integration Tests', () => {
   });
 
   describe('Activity Filter Integration', () => {
-    it('should handle search with activity filters', async () => {
+    it('should handle search with activity filters', async() => {
       const responseWithActivity = {
         MediaContainer: {
           totalSize: 1,
@@ -576,7 +576,7 @@ describe('Handler Integration Tests', () => {
           ]
         }
       };
-      
+
       mockAxios.onGet().reply(200, responseWithActivity);
 
       const result = await server.handlePlexSearch({
@@ -589,7 +589,7 @@ describe('Handler Integration Tests', () => {
       expect(result.content[0].text).toContain('Popular Track');
     });
 
-    it('should filter out items that do not match activity criteria', async () => {
+    it('should filter out items that do not match activity criteria', async() => {
       const responseWithMixedActivity = {
         MediaContainer: {
           totalSize: 2,
@@ -609,7 +609,7 @@ describe('Handler Integration Tests', () => {
             },
             {
               ratingKey: '67890',
-              key: '/library/metadata/67890', 
+              key: '/library/metadata/67890',
               title: 'Unpopular Track',
               type: 'track',
               year: 2022,
@@ -623,7 +623,7 @@ describe('Handler Integration Tests', () => {
           ]
         }
       };
-      
+
       mockAxios.onGet().reply(200, responseWithMixedActivity);
 
       const result = await server.handlePlexSearch({
@@ -636,7 +636,7 @@ describe('Handler Integration Tests', () => {
       expect(result.content[0].text).not.toContain('Unpopular Track');
     });
 
-    it('should handle browse library with activity filters', async () => {
+    it('should handle browse library with activity filters', async() => {
       const responseWithActivity = {
         MediaContainer: {
           totalSize: 1,
@@ -657,7 +657,7 @@ describe('Handler Integration Tests', () => {
           ]
         }
       };
-      
+
       mockAxios.onGet().reply(200, responseWithActivity);
 
       const result = await server.handleBrowseLibrary({
@@ -668,7 +668,7 @@ describe('Handler Integration Tests', () => {
       expect(result.content[0].text).toContain('Never Played Album');
     });
 
-    it('should handle date-based activity filters', async () => {
+    it('should handle date-based activity filters', async() => {
       const responseWithDates = {
         MediaContainer: {
           totalSize: 1,
@@ -690,7 +690,7 @@ describe('Handler Integration Tests', () => {
           ]
         }
       };
-      
+
       mockAxios.onGet().reply(200, responseWithDates);
 
       const result = await server.handleBrowseLibrary({
@@ -701,7 +701,7 @@ describe('Handler Integration Tests', () => {
       expect(result.content[0].text).toContain('Recent Track');
     });
 
-    it('should return empty results when no items match activity filters', async () => {
+    it('should return empty results when no items match activity filters', async() => {
       const responseWithNoMatches = {
         MediaContainer: {
           totalSize: 1,
@@ -721,7 +721,7 @@ describe('Handler Integration Tests', () => {
           ]
         }
       };
-      
+
       mockAxios.onGet().reply(200, responseWithNoMatches);
 
       const result = await server.handlePlexSearch({
@@ -734,7 +734,7 @@ describe('Handler Integration Tests', () => {
   });
 
   describe('Network error handling', () => {
-    it('should handle network timeouts', async () => {
+    it('should handle network timeouts', async() => {
       mockAxios.onGet().timeout();
 
       const result = await server.handlePlexSearch({
@@ -745,7 +745,7 @@ describe('Handler Integration Tests', () => {
       expect(result.content[0].text).toContain('Connection Failed');
     });
 
-    it('should handle connection refused', async () => {
+    it('should handle connection refused', async() => {
       mockAxios.onGet().networkError();
 
       const result = await server.handleBrowseLibraries({});

@@ -1,6 +1,6 @@
 /**
  * HTTP Logger - A reusable HTTP logging utility for MCP servers
- * 
+ *
  * Features:
  * - Request/response logging with correlation IDs
  * - Comprehensive diagnostic information
@@ -30,7 +30,7 @@ class HttpLogger {
    * Log HTTP request details
    */
   logRequest(config, correlationId) {
-    if (!this.debugLogging) return;
+    if (!this.debugLogging) { return; }
 
     const logData = {
       type: 'HTTP_REQUEST',
@@ -58,7 +58,7 @@ class HttpLogger {
    * Log HTTP response details
    */
   logResponse(response, correlationId, startTime) {
-    if (!this.debugLogging) return;
+    if (!this.debugLogging) { return; }
 
     const duration = Date.now() - startTime;
     const logData = {
@@ -93,7 +93,7 @@ class HttpLogger {
    * Log HTTP errors with comprehensive diagnostic information
    */
   logError(error, correlationId, startTime) {
-    if (!this.debugLogging) return;
+    if (!this.debugLogging) { return; }
 
     const duration = startTime ? Date.now() - startTime : null;
     const logData = {
@@ -132,14 +132,14 @@ class HttpLogger {
     const sensitivePatterns = [
       'token', 'authorization', 'cookie', 'auth', 'key', 'secret', 'password'
     ];
-    
+
     Object.keys(sanitized).forEach(key => {
       const lowerKey = key.toLowerCase();
       if (sensitivePatterns.some(pattern => lowerKey.includes(pattern))) {
         sanitized[key] = '[REDACTED]';
       }
     });
-    
+
     return sanitized;
   }
 
@@ -147,12 +147,12 @@ class HttpLogger {
    * Get human-readable data size
    */
   getDataSize(data) {
-    if (!data) return '0 bytes';
-    
+    if (!data) { return '0 bytes'; }
+
     try {
       const size = typeof data === 'string' ? data.length : JSON.stringify(data).length;
-      if (size < 1024) return `${size} bytes`;
-      if (size < 1024 * 1024) return `${(size / 1024).toFixed(2)} KB`;
+      if (size < 1024) { return `${size} bytes`; }
+      if (size < 1024 * 1024) { return `${(size / 1024).toFixed(2)} KB`; }
       return `${(size / (1024 * 1024)).toFixed(2)} MB`;
     } catch {
       return 'unknown';
@@ -164,29 +164,29 @@ class HttpLogger {
    */
   getConnectionInfo(error) {
     const info = {};
-    
-    if (error.code) info.errorCode = error.code;
-    if (error.address) info.address = error.address;
-    if (error.port) info.port = error.port;
-    if (error.syscall) info.syscall = error.syscall;
-    if (error.errno) info.errno = error.errno;
-    
+
+    if (error.code) { info.errorCode = error.code; }
+    if (error.address) { info.address = error.address; }
+    if (error.port) { info.port = error.port; }
+    if (error.syscall) { info.syscall = error.syscall; }
+    if (error.errno) { info.errno = error.errno; }
+
     // DNS resolution errors
-    if (error.code === 'ENOTFOUND') info.dnsResolution = 'failed';
-    if (error.code === 'EAI_AGAIN') info.dnsResolution = 'temporary_failure';
-    
+    if (error.code === 'ENOTFOUND') { info.dnsResolution = 'failed'; }
+    if (error.code === 'EAI_AGAIN') { info.dnsResolution = 'temporary_failure'; }
+
     // Connection errors
-    if (error.code === 'ECONNREFUSED') info.connection = 'refused';
-    if (error.code === 'ECONNRESET') info.connection = 'reset';
-    if (error.code === 'ETIMEDOUT') info.connection = 'timeout';
-    if (error.code === 'ECONNABORTED') info.connection = 'aborted';
-    
+    if (error.code === 'ECONNREFUSED') { info.connection = 'refused'; }
+    if (error.code === 'ECONNRESET') { info.connection = 'reset'; }
+    if (error.code === 'ETIMEDOUT') { info.connection = 'timeout'; }
+    if (error.code === 'ECONNABORTED') { info.connection = 'aborted'; }
+
     // TLS/SSL certificate information
-    if (error.code === 'CERT_HAS_EXPIRED') info.tlsError = 'certificate_expired';
-    if (error.code === 'SELF_SIGNED_CERT_IN_CHAIN') info.tlsError = 'self_signed_certificate';
-    if (error.code === 'UNABLE_TO_VERIFY_LEAF_SIGNATURE') info.tlsError = 'certificate_verification_failed';
-    if (error.code === 'DEPTH_ZERO_SELF_SIGNED_CERT') info.tlsError = 'self_signed_root_certificate';
-    
+    if (error.code === 'CERT_HAS_EXPIRED') { info.tlsError = 'certificate_expired'; }
+    if (error.code === 'SELF_SIGNED_CERT_IN_CHAIN') { info.tlsError = 'self_signed_certificate'; }
+    if (error.code === 'UNABLE_TO_VERIFY_LEAF_SIGNATURE') { info.tlsError = 'certificate_verification_failed'; }
+    if (error.code === 'DEPTH_ZERO_SELF_SIGNED_CERT') { info.tlsError = 'self_signed_root_certificate'; }
+
     return Object.keys(info).length > 0 ? info : undefined;
   }
 
@@ -195,7 +195,7 @@ class HttpLogger {
    */
   getTroubleshootingInfo(error) {
     const suggestions = [];
-    
+
     switch (error.code) {
       case 'ENOTFOUND':
         suggestions.push('Check if the hostname is correct');
@@ -247,12 +247,12 @@ class HttpLogger {
       const baseURL = config.baseURL || '';
       const url = config.url || '';
       const fullUrl = baseURL + url;
-      
+
       if (config.params) {
         const params = new URLSearchParams(config.params);
         return `${fullUrl}?${params.toString()}`;
       }
-      
+
       return fullUrl;
     } catch {
       return config.url || 'unknown';
@@ -310,16 +310,16 @@ class HttpLogger {
   createAxiosInstance(baseConfig = {}) {
     const axios = require('axios');
     const instance = axios.create(baseConfig);
-    
+
     // Request interceptor
     instance.interceptors.request.use(
       (config) => {
         const correlationId = this.generateCorrelationId();
         const startTime = Date.now();
-        
+
         config.metadata = { correlationId, startTime };
         this.logRequest(config, correlationId);
-        
+
         return config;
       },
       (error) => {
@@ -354,10 +354,10 @@ class HttpLogger {
       (config) => {
         const correlationId = this.generateCorrelationId();
         const startTime = Date.now();
-        
+
         config.metadata = { correlationId, startTime };
         this.logRequest(config, correlationId);
-        
+
         return config;
       },
       (error) => {

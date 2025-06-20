@@ -14,9 +14,9 @@ describeE2E('🔢 Multiple Item Addition Analysis', () => {
   let testItems = [];
   let cleanupPlaylistIds = [];
 
-  beforeAll(async () => {
+  beforeAll(async() => {
     originalEnv = { ...process.env };
-    
+
     console.log('🎯 ANALYZING: Multiple item addition behavior');
     console.log('📝 Goal: Determine why multiple-item operations fail');
     console.log(`📡 Server: ${plexUrl}`);
@@ -35,7 +35,7 @@ describeE2E('🔢 Multiple Item Addition Analysis', () => {
 
     const searchText = searchResult.content[0].text;
     const allIds = [...searchText.matchAll(/\*\*ID: (\d+)\*\*/g)];
-    
+
     if (allIds.length >= 6) {
       testItems = allIds.slice(0, 6).map(match => match[1]);
       console.log(`✅ Test items prepared: [${testItems.join(', ')}]`);
@@ -44,7 +44,7 @@ describeE2E('🔢 Multiple Item Addition Analysis', () => {
     }
   }, 30000);
 
-  afterAll(async () => {
+  afterAll(async() => {
     // Cleanup all test playlists
     for (const playlistId of cleanupPlaylistIds) {
       try {
@@ -54,14 +54,14 @@ describeE2E('🔢 Multiple Item Addition Analysis', () => {
         console.log(`⚠️ Cleanup failed for ${playlistId}: ${error.message}`);
       }
     }
-    
+
     process.env = originalEnv;
   }, 30000);
 
   describe('🏗️ Baseline: Single Item Operations', () => {
     let singleItemPlaylistId = null;
 
-    it('should create playlist with single item', async () => {
+    it('should create playlist with single item', async() => {
       if (testItems.length < 1) {
         console.log('⏭️ Skipping: No test items');
         return;
@@ -81,11 +81,11 @@ describeE2E('🔢 Multiple Item Addition Analysis', () => {
       }
 
       console.log('📋 Single item creation result:', createResult.content[0].text);
-      
+
       expect(createResult.content[0].text).toMatch(/Successfully created playlist/);
     }, 15000);
 
-    it('should add single item to existing playlist', async () => {
+    it('should add single item to existing playlist', async() => {
       if (!singleItemPlaylistId || testItems.length < 2) {
         console.log('⏭️ Skipping: Prerequisites not met');
         return;
@@ -115,7 +115,7 @@ describeE2E('🔢 Multiple Item Addition Analysis', () => {
   describe('🔢 Multiple Item Addition Tests', () => {
     let multiItemPlaylistId = null;
 
-    it('should create fresh playlist for multiple item testing', async () => {
+    it('should create fresh playlist for multiple item testing', async() => {
       if (testItems.length < 1) {
         console.log('⏭️ Skipping: No test items');
         return;
@@ -137,7 +137,7 @@ describeE2E('🔢 Multiple Item Addition Analysis', () => {
       expect(createResult.content[0].text).toMatch(/Successfully created playlist/);
     }, 15000);
 
-    it('should test adding 2 items at once', async () => {
+    it('should test adding 2 items at once', async() => {
       if (!multiItemPlaylistId || testItems.length < 3) {
         console.log('⏭️ Skipping: Prerequisites not met');
         return;
@@ -159,20 +159,20 @@ describeE2E('🔢 Multiple Item Addition Analysis', () => {
 
       const itemCount = browseResult.content[0].text.match(/Items: (\d+)/)?.[1];
       console.log(`🎵 Items after 2-item add: ${itemCount}`);
-      console.log(`📊 Expected: 3 items (1 initial + 2 added)`);
+      console.log('📊 Expected: 3 items (1 initial + 2 added)');
 
       if (itemCount === '3') {
         console.log('✅ SUCCESS: Multiple item addition worked!');
       } else if (itemCount === '1') {
         console.log('❌ FAILED: No items were added');
       } else {
-        console.log(`⚠️ PARTIAL: Only ${parseInt(itemCount) - 1} of 2 items were added`);
+        console.log(`⚠️ PARTIAL: Only ${parseInt(itemCount, 10) - 1} of 2 items were added`);
       }
 
       expect(addResult.content[0].text).toMatch(/Attempted to add: 2 item/);
     }, 15000);
 
-    it('should test adding 3 items at once', async () => {
+    it('should test adding 3 items at once', async() => {
       if (!multiItemPlaylistId || testItems.length < 6) {
         console.log('⏭️ Skipping: Not enough test items');
         return;
@@ -196,14 +196,14 @@ describeE2E('🔢 Multiple Item Addition Analysis', () => {
       console.log(`🎵 Items after 3-item add: ${itemCount}`);
 
       // Determine expected count based on previous test results
-      console.log(`📊 Analyzing result pattern...`);
+      console.log('📊 Analyzing result pattern...');
 
       expect(addResult.content[0].text).toMatch(/Attempted to add: 3 item/);
     }, 15000);
   });
 
   describe('🧪 Multiple Item Patterns Analysis', () => {
-    it('should test identical item additions (duplicates)', async () => {
+    it('should test identical item additions (duplicates)', async() => {
       if (testItems.length < 2) {
         console.log('⏭️ Skipping: Not enough test items');
         return;
@@ -251,7 +251,7 @@ describeE2E('🔢 Multiple Item Addition Analysis', () => {
       expect(addResult.content[0].text).toMatch(/Attempted to add: 3 item/);
     }, 15000);
 
-    it('should compare single vs multiple addition efficiency', async () => {
+    it('should compare single vs multiple addition efficiency', async() => {
       if (testItems.length < 4) {
         console.log('⏭️ Skipping: Not enough test items');
         return;
@@ -261,7 +261,7 @@ describeE2E('🔢 Multiple Item Addition Analysis', () => {
 
       // Test 1: Sequential single additions
       const sequentialStart = Date.now();
-      
+
       const createResult1 = await server.handleCreatePlaylist({
         title: `Sequential_${Date.now()}`,
         type: 'audio',
@@ -278,7 +278,7 @@ describeE2E('🔢 Multiple Item Addition Analysis', () => {
           playlist_id: sequentialPlaylistId,
           item_keys: [testItems[1]]
         });
-        
+
         await server.handleAddToPlaylist({
           playlist_id: sequentialPlaylistId,
           item_keys: [testItems[2]]
@@ -297,7 +297,7 @@ describeE2E('🔢 Multiple Item Addition Analysis', () => {
 
         // Test 2: Batch addition
         const batchStart = Date.now();
-        
+
         const createResult2 = await server.handleCreatePlaylist({
           title: `Batch_${Date.now()}`,
           type: 'audio',
@@ -344,24 +344,24 @@ describeE2E('🔢 Multiple Item Addition Analysis', () => {
   });
 
   describe('📋 Summary and Recommendations', () => {
-    it('should document findings and recommendations', async () => {
+    it('should document findings and recommendations', async() => {
       console.log('\n📊 MULTIPLE ITEM ADDITION ANALYSIS COMPLETE');
       console.log('================================================');
-      
+
       console.log('\n🔍 KEY FINDINGS:');
       console.log('- Check console output above for detailed test results');
       console.log('- Compare single vs multiple operation success rates');
       console.log('- Note any performance differences');
       console.log('- Observe Plex duplicate handling behavior');
-      
+
       console.log('\n💡 NEXT STEPS:');
       console.log('1. Review console logs for patterns');
       console.log('2. Identify which multiple-item operations fail');
       console.log('3. Implement fallback to sequential operations if needed');
       console.log('4. Improve error detection and reporting');
-      
+
       console.log('\n✅ Analysis framework complete');
-      
+
       expect(true).toBe(true);
     });
   });

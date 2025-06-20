@@ -14,10 +14,10 @@ describeE2E('E2E Safe Remove Operations Tests', () => {
   let testItemKeys = [];
   let cleanupPlaylistIds = [];
 
-  beforeAll(async () => {
+  beforeAll(async() => {
     // Save original environment
     originalEnv = { ...process.env };
-    
+
     console.log('🔒 Running SAFE remove operations tests against live Plex server');
     console.log(`📡 Server: ${plexUrl}`);
 
@@ -38,7 +38,7 @@ describeE2E('E2E Safe Remove Operations Tests', () => {
     // Extract ratingKeys from search results
     const searchText = searchResult.content[0].text;
     const allIds = [...searchText.matchAll(/\*\*ID: (\d+)\*\*/g)];
-    
+
     if (allIds.length >= 5) {
       testItemKeys = allIds.slice(0, 5).map(match => match[1]);
       console.log(`✅ Found ${testItemKeys.length} test items:`, testItemKeys);
@@ -48,7 +48,7 @@ describeE2E('E2E Safe Remove Operations Tests', () => {
     }
   }, 30000);
 
-  afterAll(async () => {
+  afterAll(async() => {
     // Cleanup test playlists
     console.log('🧹 Cleaning up test playlists...');
     for (const playlistId of cleanupPlaylistIds) {
@@ -67,7 +67,7 @@ describeE2E('E2E Safe Remove Operations Tests', () => {
   describe('🔒 Safe Remove Pattern #1: Single Item Playlist', () => {
     let singleItemPlaylistId = null;
 
-    it('should create playlist with single item for safe testing', async () => {
+    it('should create playlist with single item for safe testing', async() => {
       if (testItemKeys.length === 0) {
         console.log('⏭️ Skipping: No test items available');
         return;
@@ -91,7 +91,7 @@ describeE2E('E2E Safe Remove Operations Tests', () => {
       expect(createResult.content[0].text).toMatch(/Successfully created playlist|Playlist ID:/);
     }, 15000);
 
-    it('should verify single-item playlist has exactly 1 item', async () => {
+    it('should verify single-item playlist has exactly 1 item', async() => {
       if (!singleItemPlaylistId) {
         console.log('⏭️ Skipping: No test playlist created');
         return;
@@ -102,7 +102,7 @@ describeE2E('E2E Safe Remove Operations Tests', () => {
       });
 
       console.log('📖 Single-item playlist contents:', browseResult.content[0].text);
-      
+
       const itemCountMatch = browseResult.content[0].text.match(/Items: (\d+)/);
       if (itemCountMatch) {
         console.log(`📊 Confirmed item count: ${itemCountMatch[1]}`);
@@ -110,7 +110,7 @@ describeE2E('E2E Safe Remove Operations Tests', () => {
       }
     }, 10000);
 
-    it('should safely remove the single item (CRITICAL TEST)', async () => {
+    it('should safely remove the single item (CRITICAL TEST)', async() => {
       if (!singleItemPlaylistId || testItemKeys.length < 1) {
         console.log('⏭️ Skipping: Prerequisites not met');
         return;
@@ -136,7 +136,7 @@ describeE2E('E2E Safe Remove Operations Tests', () => {
       if (itemCountMatch) {
         const finalCount = itemCountMatch[1];
         console.log(`📊 Final item count: ${finalCount}`);
-        
+
         if (finalCount === '0') {
           console.log('✅ EXPECTED: Single-item playlist is now empty');
         } else {
@@ -151,7 +151,7 @@ describeE2E('E2E Safe Remove Operations Tests', () => {
   describe('🔒 Safe Remove Pattern #2: Multi-Item Controlled Removal', () => {
     let multiItemPlaylistId = null;
 
-    it('should create playlist with multiple items', async () => {
+    it('should create playlist with multiple items', async() => {
       if (testItemKeys.length < 3) {
         console.log('⏭️ Skipping: Need at least 3 test items');
         return;
@@ -171,7 +171,7 @@ describeE2E('E2E Safe Remove Operations Tests', () => {
 
         // Add additional items one by one
         console.log('➕ Adding items one by one...');
-        
+
         for (let i = 1; i < 3; i++) {
           const addResult = await server.handleAddToPlaylist({
             playlist_id: multiItemPlaylistId,
@@ -186,7 +186,7 @@ describeE2E('E2E Safe Remove Operations Tests', () => {
       expect(createResult.content[0].text).toMatch(/Successfully created playlist|Playlist ID:/);
     }, 20000);
 
-    it('should verify multi-item playlist has expected count', async () => {
+    it('should verify multi-item playlist has expected count', async() => {
       if (!multiItemPlaylistId) {
         console.log('⏭️ Skipping: No test playlist created');
         return;
@@ -197,16 +197,16 @@ describeE2E('E2E Safe Remove Operations Tests', () => {
       });
 
       console.log('📖 Multi-item playlist contents:', browseResult.content[0].text);
-      
+
       const itemCountMatch = browseResult.content[0].text.match(/Items: (\d+)/);
       if (itemCountMatch) {
-        const count = parseInt(itemCountMatch[1]);
+        const count = parseInt(itemCountMatch[1], 10, 10);
         console.log(`📊 Confirmed item count: ${count}`);
         expect(count).toBeGreaterThanOrEqual(2);
       }
     }, 10000);
 
-    it('should safely remove ONE item from multi-item playlist', async () => {
+    it('should safely remove ONE item from multi-item playlist', async() => {
       if (!multiItemPlaylistId || testItemKeys.length < 2) {
         console.log('⏭️ Skipping: Prerequisites not met');
         return;
@@ -217,8 +217,8 @@ describeE2E('E2E Safe Remove Operations Tests', () => {
         playlist_id: multiItemPlaylistId
       });
       const beforeCountMatch = browseBefore.content[0].text.match(/Items: (\d+)/);
-      const beforeCount = beforeCountMatch ? parseInt(beforeCountMatch[1]) : 0;
-      
+      const beforeCount = beforeCountMatch ? parseInt(beforeCountMatch[1], 10) : 0;
+
       console.log(`🔒 SAFE TEST: Removing ONE item from playlist with ${beforeCount} items`);
 
       const removeResult = await server.handleRemoveFromPlaylist({
@@ -237,9 +237,9 @@ describeE2E('E2E Safe Remove Operations Tests', () => {
 
       const afterCountMatch = browseAfter.content[0].text.match(/Items: (\d+)/);
       if (afterCountMatch) {
-        const afterCount = parseInt(afterCountMatch[1]);
+        const afterCount = parseInt(afterCountMatch[1], 10);
         console.log(`📊 Before: ${beforeCount} items, After: ${afterCount} items`);
-        
+
         if (afterCount === beforeCount - 1) {
           console.log('✅ EXPECTED: Removed exactly 1 item');
         } else if (afterCount === 0) {
@@ -256,7 +256,7 @@ describeE2E('E2E Safe Remove Operations Tests', () => {
   describe('🔒 Safe Remove Pattern #3: Step-by-Step Documentation', () => {
     let docPlaylistId = null;
 
-    it('should create well-documented test playlist', async () => {
+    it('should create well-documented test playlist', async() => {
       if (testItemKeys.length < 4) {
         console.log('⏭️ Skipping: Need at least 4 test items');
         return;
@@ -277,7 +277,7 @@ describeE2E('E2E Safe Remove Operations Tests', () => {
         cleanupPlaylistIds.push(docPlaylistId);
 
         console.log(`1️⃣ Initial playlist created: ${docPlaylistId}`);
-        
+
         // Document initial state
         const initialBrowse = await server.handleBrowsePlaylist({
           playlist_id: docPlaylistId
@@ -287,16 +287,16 @@ describeE2E('E2E Safe Remove Operations Tests', () => {
         // Add items with documentation
         for (let i = 1; i < 4; i++) {
           console.log(`${i + 1}️⃣ Adding item ${testItemKeys[i]}...`);
-          
-          const addResult = await server.handleAddToPlaylist({
+
+          const _addResult = await server.handleAddToPlaylist({
             playlist_id: docPlaylistId,
             item_keys: [testItemKeys[i]]
           });
-          
+
           const browseAfterAdd = await server.handleBrowsePlaylist({
             playlist_id: docPlaylistId
           });
-          
+
           const countAfterAdd = browseAfterAdd.content[0].text.match(/Items: (\d+)/)?.[1] || 'unknown';
           console.log(`   After adding: ${countAfterAdd} items`);
         }
@@ -307,7 +307,7 @@ describeE2E('E2E Safe Remove Operations Tests', () => {
       expect(createResult.content[0].text).toMatch(/Successfully created playlist|Playlist ID:/);
     }, 25000);
 
-    it('should document removal behavior step by step', async () => {
+    it('should document removal behavior step by step', async() => {
       if (!docPlaylistId) {
         console.log('⏭️ Skipping: No documentation playlist created');
         return;
@@ -324,7 +324,7 @@ describeE2E('E2E Safe Remove Operations Tests', () => {
 
       // Test removing middle item (not first or last)
       console.log(`🗑️ Removing middle item: ${testItemKeys[2]}`);
-      
+
       const removeResult = await server.handleRemoveFromPlaylist({
         playlist_id: docPlaylistId,
         item_keys: [testItemKeys[2]]
@@ -341,12 +341,12 @@ describeE2E('E2E Safe Remove Operations Tests', () => {
 
       // Analysis
       if (currentCount !== 'unknown' && finalCount !== 'unknown') {
-        const removed = parseInt(currentCount) - parseInt(finalCount);
+        const removed = parseInt(currentCount, 10) - parseInt(finalCount, 10);
         console.log(`📈 Analysis: Attempted to remove 1 item, actually removed ${removed} items`);
-        
+
         if (removed === 1) {
           console.log('✅ SAFE: Remove operation worked as expected');
-        } else if (parseInt(finalCount) === 0) {
+        } else if (parseInt(finalCount, 10) === 0) {
           console.log('🚨 DANGEROUS: Remove operation emptied entire playlist');
         } else {
           console.log('⚠️ UNEXPECTED: Remove operation had unexpected behavior');
@@ -358,14 +358,14 @@ describeE2E('E2E Safe Remove Operations Tests', () => {
   });
 
   describe('📊 Pattern Analysis Summary', () => {
-    it('should summarize what we learned about safe patterns', async () => {
+    it('should summarize what we learned about safe patterns', async() => {
       console.log('\n📈 SAFE REMOVE OPERATIONS ANALYSIS COMPLETE');
       console.log('📝 Check test output above to understand:');
       console.log('   • Which remove operations work as expected');
       console.log('   • Which remove operations exhibit dangerous behavior');
       console.log('   • Patterns that can be used safely in production');
       console.log('✅ Analysis complete - patterns documented in test logs');
-      
+
       expect(true).toBe(true);
     });
   });

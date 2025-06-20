@@ -1,11 +1,11 @@
 const PlexMCPServer = require('../../index.js');
-const { 
-  mockSearchResponse, 
-  mockLibrariesResponse, 
+const {
+  mockSearchResponse,
+  mockLibrariesResponse,
   mockPlaylistsResponse,
   mockWatchHistoryResponse,
   mockOnDeckResponse,
-  mockEmptyResponse 
+  mockEmptyResponse
 } = require('../fixtures/plex-responses.js');
 
 describe('Parser Functions', () => {
@@ -18,7 +18,7 @@ describe('Parser Functions', () => {
   describe('parseSearchResults', () => {
     it('should parse search results correctly', () => {
       const results = server.parseSearchResults(mockSearchResponse);
-      
+
       expect(results).toHaveLength(2);
       expect(results[0]).toEqual({
         title: 'Test Movie',
@@ -67,7 +67,7 @@ describe('Parser Functions', () => {
   describe('parseLibraries', () => {
     it('should parse libraries correctly', () => {
       const libraries = server.parseLibraries(mockLibrariesResponse);
-      
+
       expect(libraries).toHaveLength(3);
       expect(libraries[0]).toEqual({
         key: '1',
@@ -92,7 +92,7 @@ describe('Parser Functions', () => {
   describe('parsePlaylists', () => {
     it('should parse playlists correctly', () => {
       const playlists = server.parsePlaylists(mockPlaylistsResponse);
-      
+
       expect(playlists).toHaveLength(2);
       expect(playlists[0]).toEqual({
         ratingKey: 'pl001',
@@ -118,7 +118,7 @@ describe('Parser Functions', () => {
   describe('parseWatchHistory', () => {
     it('should parse watch history correctly', () => {
       const history = server.parseWatchHistory(mockWatchHistoryResponse);
-      
+
       expect(history).toHaveLength(2);
       expect(history[0]).toEqual({
         title: 'Test Movie',
@@ -148,7 +148,7 @@ describe('Parser Functions', () => {
   describe('parseOnDeck', () => {
     it('should parse on deck items correctly', () => {
       const onDeck = server.parseOnDeck(mockOnDeckResponse);
-      
+
       expect(onDeck).toHaveLength(1);
       expect(onDeck[0]).toEqual({
         title: 'Episode Title',
@@ -179,9 +179,9 @@ describe('Parser Functions', () => {
         lastViewedAt: 1703184000,
         duration: 7200000
       };
-      
+
       const status = server.parseWatchedStatus(item);
-      
+
       expect(status).toEqual({
         ratingKey: '12345',
         title: 'Test Movie',
@@ -209,9 +209,9 @@ describe('Parser Functions', () => {
         duration: 2700000,
         viewCount: 0
       };
-      
+
       const status = server.parseWatchedStatus(item);
-      
+
       expect(status.watched).toBe(false);
       expect(status.partiallyWatched).toBe(true);
       expect(status.viewOffset).toBe(1350000);
@@ -224,9 +224,9 @@ describe('Parser Functions', () => {
         type: 'movie',
         duration: 7200000
       };
-      
+
       const status = server.parseWatchedStatus(item);
-      
+
       expect(status.watched).toBe(false);
       expect(status.partiallyWatched).toBe(false);
       expect(status.viewCount).toBe(0);
@@ -237,7 +237,7 @@ describe('Parser Functions', () => {
   describe('parseLibraryContent', () => {
     it('should parse library content with additional fields', () => {
       const content = server.parseLibraryContent(mockSearchResponse);
-      
+
       expect(content).toHaveLength(2);
       expect(content[0]).toHaveProperty('title', 'Test Movie');
       expect(content[0]).toHaveProperty('genres');
