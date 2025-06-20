@@ -175,7 +175,7 @@ class PlexMCPServer {
     this.authManager = new PlexAuthManager();
     this.connectionVerified = false;
     // Allow dependency injection for testing
-    this.axios = options.axios || this.axios;
+    this.axios = options.axios || _axiosWithLogging;
     this.setupToolHandlers();
     this.setupResourceHandlers();
     this.setupPromptHandlers();
@@ -278,6 +278,7 @@ ${verification.error}
   getHttpsAgent() {
     const verifySSL = process.env.PLEX_VERIFY_SSL !== 'false';
     const https = require('https');
+    const tls = require('tls');
 
     return new https.Agent({
       rejectUnauthorized: verifySSL,
@@ -292,7 +293,7 @@ ${verification.error}
 
         // For non-plex.direct domains, use default behavior
         if (verifySSL) {
-          return https.globalAgent.options.checkServerIdentity(hostname, cert);
+          return tls.checkServerIdentity(hostname, cert);
         }
 
         // If SSL verification is disabled, skip all checks
