@@ -291,6 +291,17 @@ ${verification.error}
           return undefined;
         }
 
+        // Check if certificate is for a plex.direct domain (common case)
+        // Plex servers always use plex.direct certificates regardless of hostname
+        const certSubject = cert.subject?.CN || '';
+        const certSANs = cert.subjectaltname || '';
+        const isPlexDirectCert = certSubject.includes('plex.direct') || certSANs.includes('plex.direct');
+        
+        if (isPlexDirectCert && !verifySSL) {
+          // Allow plex.direct certificates when SSL verification is disabled
+          return undefined;
+        }
+
         // For non-plex.direct domains, use default behavior
         if (verifySSL) {
           return tls.checkServerIdentity(hostname, cert);
