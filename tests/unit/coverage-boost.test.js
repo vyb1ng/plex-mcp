@@ -27,12 +27,12 @@ describe('Coverage Boost Tests', () => {
       let result = server.parseSearchResults({});
       expect(Array.isArray(result)).toBe(true);
       expect(result.length).toBe(0);
-      
+
       // Test with MediaContainer but no Metadata
       result = server.parseSearchResults({ MediaContainer: {} });
       expect(Array.isArray(result)).toBe(true);
       expect(result.length).toBe(0);
-      
+
       // Test with empty Metadata array
       result = server.parseSearchResults({ MediaContainer: { Metadata: [] } });
       expect(Array.isArray(result)).toBe(true);
@@ -43,7 +43,7 @@ describe('Coverage Boost Tests', () => {
       let result = server.parseLibraries({});
       expect(Array.isArray(result)).toBe(true);
       expect(result.length).toBe(0);
-      
+
       result = server.parseLibraries({ MediaContainer: {} });
       expect(Array.isArray(result)).toBe(true);
       expect(result.length).toBe(0);
@@ -53,7 +53,7 @@ describe('Coverage Boost Tests', () => {
       let result = server.parsePlaylists({});
       expect(Array.isArray(result)).toBe(true);
       expect(result.length).toBe(0);
-      
+
       result = server.parsePlaylists({ MediaContainer: {} });
       expect(Array.isArray(result)).toBe(true);
       expect(result.length).toBe(0);
@@ -76,7 +76,7 @@ describe('Coverage Boost Tests', () => {
       expect(typeof result).toBe('object');
       expect(result.ratingKey).toBeUndefined();
       expect(result.viewCount).toBe(0);
-      
+
       result = server.parseWatchedStatus({ ratingKey: '123', title: 'Test' });
       expect(typeof result).toBe('object');
       expect(result.ratingKey).toBe('123');
@@ -112,10 +112,10 @@ describe('Coverage Boost Tests', () => {
         title: 'Test',
         Media: [{ Part: [{ audioCodec: 'dts', size: 1000000000 }] }]
       }];
-      
+
       let result = server.applyAdvancedFilters(items, { audio_format: 'lossless' });
       expect(result.length).toBe(1);
-      
+
       result = server.applyAdvancedFilters(items, { audio_format: 'lossy' });
       expect(result.length).toBe(0);
     });
@@ -132,7 +132,7 @@ describe('Coverage Boost Tests', () => {
       const items = [{ title: 'Test', ratingKey: '1' }];
       let result = server.applyActivityFilters(items, { play_count_min: 1 });
       expect(result.length).toBe(0);
-      
+
       result = server.applyActivityFilters(items, { never_played: true });
       expect(result.length).toBe(1);
     });
@@ -145,17 +145,17 @@ describe('Coverage Boost Tests', () => {
         viewCount: 1,
         lastViewedAt: recentTime.toString()
       }];
-      
+
       let result = server.applyActivityFilters(items, { played_in_last_days: 1 });
       expect(result.length).toBe(1);
-      
+
       // Test with an item that's definitely too old for 0 days
       const oldItems = [{
         title: 'Old Test',
         viewCount: 1,
         lastViewedAt: veryOldTime.toString()
       }];
-      
+
       // Note: played_in_last_days: 0 is falsy, so the filter might not apply at all
       // Let's test with a very small positive number instead
       result = server.applyActivityFilters(oldItems, { played_in_last_days: 0.001 });
@@ -172,7 +172,7 @@ describe('Coverage Boost Tests', () => {
         summary: 'A'.repeat(500), // Long summary to test truncation
         duration: 7200000
       };
-      
+
       const result = server.formatResults([movieItem]);
       expect(typeof result).toBe('string');
       expect(result).toContain('Test Movie');
@@ -185,7 +185,7 @@ describe('Coverage Boost Tests', () => {
         key: '1',
         updatedAt: '1640995200'
       }];
-      
+
       const result = server.formatLibraries(libraries);
       expect(typeof result).toBe('string');
       expect(result).toContain('Movies');
@@ -199,7 +199,7 @@ describe('Coverage Boost Tests', () => {
         leafCount: 10,
         duration: 3600000
       }];
-      
+
       const result = server.formatPlaylists(playlists);
       expect(typeof result).toBe('string');
       expect(result).toContain('Test Playlist');
@@ -211,7 +211,7 @@ describe('Coverage Boost Tests', () => {
         type: 'movie',
         viewedAt: '1640995200'
       }];
-      
+
       const result = server.formatWatchHistory(history);
       expect(typeof result).toBe('string');
       expect(result).toContain('Watched Movie');
@@ -224,7 +224,7 @@ describe('Coverage Boost Tests', () => {
         viewOffset: 600000,
         duration: 1800000
       }];
-      
+
       const result = server.formatOnDeck(onDeck);
       expect(typeof result).toBe('string');
       expect(result).toContain('Continue Show');
@@ -237,7 +237,7 @@ describe('Coverage Boost Tests', () => {
         status: 'watched',
         progress: '100%'
       }];
-      
+
       const result = server.formatWatchedStatus(statuses);
       expect(typeof result).toBe('string');
       expect(result).toContain('Test Movie');
@@ -250,7 +250,7 @@ describe('Coverage Boost Tests', () => {
         addedAt: '1640995200',
         Genre: [{ tag: 'Action' }, { tag: 'Drama' }, { tag: 'Comedy' }, { tag: 'Thriller' }]
       }];
-      
+
       const result = server.formatRecentlyAdded(recent);
       expect(typeof result).toBe('string');
       expect(result).toContain('New Movie');
@@ -258,30 +258,30 @@ describe('Coverage Boost Tests', () => {
   });
 
   describe('Error Path Coverage', () => {
-    it('should handle missing environment variables', async () => {
+    it('should handle missing environment variables', async() => {
       delete process.env.PLEX_TOKEN;
-      
+
       const result = await server.handleBrowseLibrary({ library_id: '1' });
       expect(result.isError).toBe(true);
     });
 
-    it('should handle network errors gracefully', async () => {
+    it('should handle network errors gracefully', async() => {
       mock.onGet().networkError();
-      
+
       const result = await server.handleBrowseLibraries({});
       expect(result.isError).toBe(true);
     });
 
-    it('should handle timeout errors', async () => {
+    it('should handle timeout errors', async() => {
       mock.onGet().timeout();
-      
+
       const result = await server.handleListPlaylists({});
       expect(result.isError).toBe(true);
     });
 
-    it('should handle malformed responses', async () => {
+    it('should handle malformed responses', async() => {
       mock.onGet().reply(200, 'invalid json');
-      
+
       const result = await server.handleOnDeck({});
       // This may or may not be an error depending on how the XML parser handles it
       expect(typeof result).toBe('object');

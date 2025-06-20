@@ -24,7 +24,7 @@ describe('Handler Functions Tests', () => {
   });
 
   describe('handleGetCollections', () => {
-    it('should handle API errors', async () => {
+    it('should handle API errors', async() => {
       mock.onGet().reply(500, 'Server Error');
 
       const result = await server.handleGetCollections({});
@@ -36,7 +36,7 @@ describe('Handler Functions Tests', () => {
 
 
   describe('Smart Playlist Creation', () => {
-    it.skip('should handle smart playlist creation (disabled feature)', async () => {
+    it.skip('should handle smart playlist creation (disabled feature)', async() => {
       const mockResponse = {
         MediaContainer: {
           Metadata: [{
@@ -51,10 +51,10 @@ describe('Handler Functions Tests', () => {
       mock.onGet().reply(200, { MediaContainer: { machineIdentifier: 'test' } });
       mock.onPost().reply(200, mockResponse);
 
-      const result = await server.handleCreatePlaylist({ 
-        title: 'Smart Test Playlist', 
-        type: 'audio', 
-        smart: true 
+      const result = await server.handleCreatePlaylist({
+        title: 'Smart Test Playlist',
+        type: 'audio',
+        smart: true
       });
 
       expect(result.content[0].text).toContain('smart playlist');

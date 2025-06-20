@@ -49,7 +49,7 @@ describe('Activity Filters', () => {
       expect(filtered).toHaveLength(3);
       expect(filtered.map(r => r.title)).toEqual([
         'Never Played Track',
-        'Rarely Played Track', 
+        'Rarely Played Track',
         'Recent Hit'
       ]);
     });

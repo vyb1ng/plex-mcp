@@ -14,9 +14,9 @@ describeE2E('🚨 Critical Remove Bug Investigation', () => {
   let testItems = [];
   let testPlaylistId = null;
 
-  beforeAll(async () => {
+  beforeAll(async() => {
     originalEnv = { ...process.env };
-    
+
     console.log('🔬 CRITICAL BUG INVESTIGATION: Remove Operations');
     console.log('🎯 Goal: Understand why remove operations delete entire playlists');
     console.log(`📡 Testing against: ${plexUrl}`);
@@ -35,19 +35,19 @@ describeE2E('🚨 Critical Remove Bug Investigation', () => {
 
     const searchText = searchResult.content[0].text;
     const allIds = [...searchText.matchAll(/\*\*ID: (\d+)\*\*/g)];
-    
+
     if (allIds.length >= 3) {
       testItems = allIds.slice(0, 3).map(match => ({
         id: match[1],
         title: `Test Item ${match[1]}`
       }));
-      console.log(`✅ Test items prepared:`, testItems.map(item => item.id));
+      console.log('✅ Test items prepared:', testItems.map(item => item.id));
     } else {
       console.log('❌ Insufficient test items found');
     }
   }, 30000);
 
-  afterAll(async () => {
+  afterAll(async() => {
     // Cleanup
     if (testPlaylistId) {
       try {
@@ -57,12 +57,12 @@ describeE2E('🚨 Critical Remove Bug Investigation', () => {
         console.log(`⚠️ Cleanup failed: ${error.message}`);
       }
     }
-    
+
     process.env = originalEnv;
   }, 15000);
 
   describe('🏗️ Controlled Playlist Setup', () => {
-    it('should create playlist with known contents', async () => {
+    it('should create playlist with known contents', async() => {
       if (testItems.length < 3) {
         console.log('⏭️ Skipping: Insufficient test items');
         return;
@@ -89,7 +89,7 @@ describeE2E('🚨 Critical Remove Bug Investigation', () => {
 
       console.log('📋 After adding second item:', addResult.content[0].text);
 
-      // Add third item individually  
+      // Add third item individually
       const addResult2 = await server.handleAddToPlaylist({
         playlist_id: testPlaylistId,
         item_keys: [testItems[2].id]
@@ -113,20 +113,20 @@ describeE2E('🚨 Critical Remove Bug Investigation', () => {
   });
 
   describe('🔍 Detailed Remove Analysis', () => {
-    it('should document exact playlist state before removal', async () => {
+    it('should document exact playlist state before removal', async() => {
       if (!testPlaylistId) {
         console.log('⏭️ Skipping: No test playlist');
         return;
       }
 
       console.log('\n📋 DETAILED PRE-REMOVAL STATE:');
-      
+
       const browseResult = await server.handleBrowsePlaylist({
         playlist_id: testPlaylistId
       });
 
       console.log('Full playlist contents:', browseResult.content[0].text);
-      
+
       // Log each item we can see
       const itemMatches = [...browseResult.content[0].text.matchAll(/ID: (\d+)/g)];
       console.log('📊 Individual items found:');
@@ -140,7 +140,7 @@ describeE2E('🚨 Critical Remove Bug Investigation', () => {
       expect(itemMatches.length).toBeGreaterThan(0);
     }, 10000);
 
-    it('should execute the critical remove operation', async () => {
+    it('should execute the critical remove operation', async() => {
       if (!testPlaylistId || testItems.length < 2) {
         console.log('⏭️ Skipping: Prerequisites not met');
         return;
@@ -184,14 +184,14 @@ describeE2E('🚨 Critical Remove Bug Investigation', () => {
   });
 
   describe('🧪 Additional Remove Patterns', () => {
-    it('should test remove operation with non-existent item', async () => {
+    it('should test remove operation with non-existent item', async() => {
       if (!testPlaylistId) {
         console.log('⏭️ Skipping: No test playlist');
         return;
       }
 
       console.log('\n🧪 Testing remove with non-existent item:');
-      
+
       const fakeItemId = '999999999';
       const removeResult = await server.handleRemoveFromPlaylist({
         playlist_id: testPlaylistId,
@@ -213,24 +213,24 @@ describeE2E('🚨 Critical Remove Bug Investigation', () => {
   });
 
   describe('📊 Bug Pattern Documentation', () => {
-    it('should document the complete bug pattern', async () => {
+    it('should document the complete bug pattern', async() => {
       console.log('\n📋 COMPLETE BUG ANALYSIS SUMMARY:');
       console.log('==========================================');
-      
+
       console.log('\n🔍 FINDINGS:');
       console.log('1. Single item additions: Work correctly');
       console.log('2. Multiple item additions: May fail');
       console.log('3. Remove operations: CRITICAL BUG - removes all items');
       console.log('4. Response messages: Often inaccurate');
-      
+
       console.log('\n🎯 RECOMMENDED ACTIONS:');
       console.log('1. Fix remove operations to be selective');
       console.log('2. Improve response message accuracy');
       console.log('3. Add validation for multiple item operations');
       console.log('4. Implement better error detection');
-      
+
       console.log('\n✅ Analysis complete - check console output for detailed findings');
-      
+
       expect(true).toBe(true);
     });
   });

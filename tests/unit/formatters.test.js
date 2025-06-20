@@ -20,7 +20,7 @@ describe('Formatter Functions', () => {
       ];
 
       const formatted = server.formatResults(results);
-      
+
       expect(formatted).toContain('1. **Test Movie** (2023) - movie');
       expect(formatted).toContain('Rating: 8.5');
       expect(formatted).toContain('A test movie for unit testing');
@@ -39,7 +39,7 @@ describe('Formatter Functions', () => {
       ];
 
       const formatted = server.formatResults(results);
-      
+
       expect(formatted).toContain('1. **Episode Title**');
       expect(formatted).toContain('(2023)');
       expect(formatted).toContain('First episode of the show');
@@ -53,7 +53,7 @@ describe('Formatter Functions', () => {
       ];
 
       const formatted = server.formatResults(results);
-      
+
       expect(formatted).toBe('1. **Basic Movie**');
     });
 
@@ -67,7 +67,7 @@ describe('Formatter Functions', () => {
       ];
 
       const formatted = server.formatResults(results);
-      
+
       expect(formatted).toContain('...');
       expect(formatted.length).toBeLessThan(longSummary.length + 50);
     });
@@ -87,7 +87,7 @@ describe('Formatter Functions', () => {
       ];
 
       const formatted = server.formatLibraries(libraries);
-      
+
       expect(formatted).toContain('1. **Movies** (movie)');
       expect(formatted).toContain('Agent: com.plexapp.agents.themoviedb');
       expect(formatted).toContain('Language: en');
@@ -105,7 +105,7 @@ describe('Formatter Functions', () => {
       ];
 
       const formatted = server.formatLibraries(libraries);
-      
+
       expect(formatted).toContain('1. **Basic Library** (movie)');
       expect(formatted).toContain('Library ID: 1');
       expect(formatted).not.toContain('Agent:');
@@ -127,7 +127,7 @@ describe('Formatter Functions', () => {
       ];
 
       const formatted = server.formatPlaylists(playlists);
-      
+
       expect(formatted).toContain('1. **My Music Playlist** (audio)');
       expect(formatted).toContain('Items: 15');
       expect(formatted).toContain('Duration: 1h 0m');
@@ -147,7 +147,7 @@ describe('Formatter Functions', () => {
       ];
 
       const formatted = server.formatPlaylists(playlists);
-      
+
       expect(formatted).toContain('Smart Playlist');
     });
 
@@ -161,7 +161,7 @@ describe('Formatter Functions', () => {
       ];
 
       const formatted = server.formatPlaylists(playlists);
-      
+
       expect(formatted).toContain('Duration: 2h 30m');
     });
   });
@@ -181,7 +181,7 @@ describe('Formatter Functions', () => {
       ];
 
       const formatted = server.formatWatchHistory(history);
-      
+
       expect(formatted).toContain('1. **Test Movie** (2023)');
       expect(formatted).toContain('Watched:');
       expect(formatted).toContain('Progress: 100%');
@@ -202,7 +202,7 @@ describe('Formatter Functions', () => {
       ];
 
       const formatted = server.formatWatchHistory(history);
-      
+
       expect(formatted).toContain('1. **Test TV Show** S1E1 - Episode Title');
       expect(formatted).toContain('Progress: 50%');
     });
@@ -216,7 +216,7 @@ describe('Formatter Functions', () => {
       ];
 
       const formatted = server.formatWatchHistory(history);
-      
+
       expect(formatted).toContain('1. **Movie Without Progress**');
       expect(formatted).not.toContain('Progress:');
     });
@@ -238,7 +238,7 @@ describe('Formatter Functions', () => {
       ];
 
       const formatted = server.formatOnDeck(onDeck);
-      
+
       expect(formatted).toContain('1. **Test TV Show** S1E2 - Episode Title');
       expect(formatted).toContain('Progress: 33%');
       expect(formatted).toContain('30 min remaining');
@@ -258,7 +258,7 @@ describe('Formatter Functions', () => {
       ];
 
       const formatted = server.formatOnDeck(onDeck);
-      
+
       expect(formatted).toContain('1. **Test Movie** (2023)');
       expect(formatted).toContain('Progress: 50%');
       expect(formatted).toContain('60 min remaining');
@@ -279,7 +279,7 @@ describe('Formatter Functions', () => {
       ];
 
       const formatted = server.formatWatchedStatus(status);
-      
+
       expect(formatted).toContain('1. **Watched Movie** (2023)');
       expect(formatted).toContain('Status: ✅ Watched (2 times)');
       expect(formatted).toContain('Last watched:');
@@ -299,7 +299,7 @@ describe('Formatter Functions', () => {
       ];
 
       const formatted = server.formatWatchedStatus(status);
-      
+
       expect(formatted).toContain('Status: ⏸️ In Progress (50% complete, 60m remaining)');
     });
 
@@ -314,7 +314,7 @@ describe('Formatter Functions', () => {
       ];
 
       const formatted = server.formatWatchedStatus(status);
-      
+
       expect(formatted).toContain('Status: ⬜ Unwatched');
     });
 
@@ -328,7 +328,7 @@ describe('Formatter Functions', () => {
       ];
 
       const formatted = server.formatWatchedStatus(status);
-      
+
       expect(formatted).toContain('Error: Item not found');
     });
 
@@ -346,7 +346,7 @@ describe('Formatter Functions', () => {
       ];
 
       const formatted = server.formatWatchedStatus(status);
-      
+
       expect(formatted).toContain('1. **Test TV Show** S1E1 - Episode Title');
     });
   });
@@ -365,7 +365,7 @@ describe('Formatter Functions', () => {
       ];
 
       const formatted = server.formatRecentlyAdded(items);
-      
+
       expect(formatted).toContain('1. **New Movie** (2023) - movie');
       expect(formatted).toContain('Added:');
       expect(formatted).toContain('Genres: Action, Adventure, Sci-Fi');
@@ -381,7 +381,7 @@ describe('Formatter Functions', () => {
       ];
 
       const formatted = server.formatRecentlyAdded(items);
-      
+
       expect(formatted).toContain('Genres: Action, Adventure, Sci-Fi');
       expect(formatted).not.toContain('Thriller');
     });
@@ -396,7 +396,7 @@ describe('Formatter Functions', () => {
       ];
 
       const formatted = server.formatRecentlyAdded(items);
-      
+
       expect(formatted).toContain('...');
       expect(formatted.includes(longSummary)).toBe(false);
     });

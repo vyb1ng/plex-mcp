@@ -15,10 +15,10 @@ describeE2E('E2E Playlist Behavior Analysis Tests', () => {
   let testItemKeys = [];
   let cleanupPlaylistIds = [];
 
-  beforeAll(async () => {
+  beforeAll(async() => {
     // Save original environment
     originalEnv = { ...process.env };
-    
+
     console.log('🧪 Running detailed playlist behavior analysis against live Plex server');
     console.log(`📡 Server: ${plexUrl}`);
 
@@ -39,7 +39,7 @@ describeE2E('E2E Playlist Behavior Analysis Tests', () => {
     // Extract ratingKeys from search results
     const searchText = searchResult.content[0].text;
     const allIds = [...searchText.matchAll(/\*\*ID: (\d+)\*\*/g)];
-    
+
     if (allIds.length >= 5) {
       testItemKeys = allIds.slice(0, 5).map(match => match[1]);
       console.log(`✅ Found ${testItemKeys.length} test items:`, testItemKeys);
@@ -49,7 +49,7 @@ describeE2E('E2E Playlist Behavior Analysis Tests', () => {
     }
   }, 30000);
 
-  afterAll(async () => {
+  afterAll(async() => {
     // Cleanup test playlists
     console.log('🧹 Cleaning up test playlists...');
     for (const playlistId of cleanupPlaylistIds) {
@@ -66,7 +66,7 @@ describeE2E('E2E Playlist Behavior Analysis Tests', () => {
   }, 30000);
 
   describe('📝 Playlist Creation Behavior', () => {
-    it('should create playlist with single initial item', async () => {
+    it('should create playlist with single initial item', async() => {
       if (testItemKeys.length === 0) {
         console.log('⏭️ Skipping: No test items available');
         return;
@@ -91,7 +91,7 @@ describeE2E('E2E Playlist Behavior Analysis Tests', () => {
       expect(createResult.content[0].text).toMatch(/Successfully created playlist|Playlist ID:/);
     }, 15000);
 
-    it('should verify initial playlist contents', async () => {
+    it('should verify initial playlist contents', async() => {
       if (!testPlaylistId) {
         console.log('⏭️ Skipping: No test playlist created');
         return;
@@ -102,13 +102,13 @@ describeE2E('E2E Playlist Behavior Analysis Tests', () => {
       });
 
       console.log('📖 Initial playlist contents:', browseResult.content[0].text);
-      
+
       expect(browseResult.content[0].text).toMatch(/Items: \d+/);
     }, 10000);
   });
 
   describe('➕ Add Operations Analysis', () => {
-    it('should test adding SINGLE item to existing playlist', async () => {
+    it('should test adding SINGLE item to existing playlist', async() => {
       if (!testPlaylistId || testItemKeys.length < 2) {
         console.log('⏭️ Skipping: Prerequisites not met');
         return;
@@ -133,7 +133,7 @@ describeE2E('E2E Playlist Behavior Analysis Tests', () => {
       expect(addResult.content[0].text).toMatch(/Attempted to add: 1 item/);
     }, 15000);
 
-    it('should test adding MULTIPLE items at once (the failing case)', async () => {
+    it('should test adding MULTIPLE items at once (the failing case)', async() => {
       if (!testPlaylistId || testItemKeys.length < 5) {
         console.log('⏭️ Skipping: Prerequisites not met');
         return;
@@ -158,7 +158,7 @@ describeE2E('E2E Playlist Behavior Analysis Tests', () => {
       expect(addResult.content[0].text).toMatch(/Attempted to add: 3 item/);
     }, 15000);
 
-    it('should test adding duplicate items (should be ignored)', async () => {
+    it('should test adding duplicate items (should be ignored)', async() => {
       if (!testPlaylistId || testItemKeys.length < 2) {
         console.log('⏭️ Skipping: Prerequisites not met');
         return;
@@ -178,7 +178,7 @@ describeE2E('E2E Playlist Behavior Analysis Tests', () => {
   });
 
   describe('❌ Remove Operations Analysis (CRITICAL)', () => {
-    it('should document current playlist state before removal', async () => {
+    it('should document current playlist state before removal', async() => {
       if (!testPlaylistId) {
         console.log('⏭️ Skipping: No test playlist available');
         return;
@@ -189,7 +189,7 @@ describeE2E('E2E Playlist Behavior Analysis Tests', () => {
       });
 
       console.log('📋 BEFORE REMOVAL - Playlist state:', browseResult.content[0].text);
-      
+
       // Extract item count for comparison
       const itemCountMatch = browseResult.content[0].text.match(/Items: (\d+)/);
       if (itemCountMatch) {
@@ -197,7 +197,7 @@ describeE2E('E2E Playlist Behavior Analysis Tests', () => {
       }
     }, 10000);
 
-    it('should test removing SINGLE item (the dangerous operation)', async () => {
+    it('should test removing SINGLE item (the dangerous operation)', async() => {
       if (!testPlaylistId || testItemKeys.length < 1) {
         console.log('⏭️ Skipping: Prerequisites not met');
         return;
@@ -224,7 +224,7 @@ describeE2E('E2E Playlist Behavior Analysis Tests', () => {
       const itemCountMatch = browseAfter.content[0].text.match(/Items: (\d+)/);
       if (itemCountMatch) {
         console.log(`📊 Items after removal: ${itemCountMatch[1]}`);
-        
+
         if (itemCountMatch[1] === '0') {
           console.log('🚨 CRITICAL BUG CONFIRMED: Remove operation emptied entire playlist!');
         }
@@ -235,7 +235,7 @@ describeE2E('E2E Playlist Behavior Analysis Tests', () => {
   });
 
   describe('🧪 API Behavior Patterns', () => {
-    it('should create fresh playlist for pattern testing', async () => {
+    it('should create fresh playlist for pattern testing', async() => {
       if (testItemKeys.length < 3) {
         console.log('⏭️ Skipping: Not enough test items');
         return;
@@ -253,10 +253,10 @@ describeE2E('E2E Playlist Behavior Analysis Tests', () => {
       if (playlistMatch) {
         const patternTestPlaylistId = playlistMatch[1];
         cleanupPlaylistIds.push(patternTestPlaylistId);
-        
+
         // Test the exact sequence: create -> add single -> add multiple -> remove
         console.log('\n🔬 TESTING EXACT SEQUENCE PATTERN:');
-        
+
         // Step 1: Add single item
         console.log('1️⃣ Adding single item...');
         const singleAdd = await server.handleAddToPlaylist({
@@ -264,13 +264,13 @@ describeE2E('E2E Playlist Behavior Analysis Tests', () => {
           item_keys: [testItemKeys[1]]
         });
         console.log('   Result:', singleAdd.content[0].text);
-        
+
         // Step 2: Check state
         const afterSingle = await server.handleBrowsePlaylist({
           playlist_id: patternTestPlaylistId
         });
         console.log('   State after single add:', afterSingle.content[0].text.match(/Items: (\d+)/)?.[1] || 'unknown');
-        
+
         // Step 3: Add multiple items
         console.log('2️⃣ Adding multiple items...');
         const multipleAdd = await server.handleAddToPlaylist({
@@ -278,7 +278,7 @@ describeE2E('E2E Playlist Behavior Analysis Tests', () => {
           item_keys: [testItemKeys[2]]
         });
         console.log('   Result:', multipleAdd.content[0].text);
-        
+
         // Step 4: Check final state
         const finalState = await server.handleBrowsePlaylist({
           playlist_id: patternTestPlaylistId
@@ -291,30 +291,30 @@ describeE2E('E2E Playlist Behavior Analysis Tests', () => {
   });
 
   describe('🔍 Response Message Analysis', () => {
-    it('should analyze response accuracy patterns', async () => {
+    it('should analyze response accuracy patterns', async() => {
       console.log('\n📈 RESPONSE MESSAGE ANALYSIS:');
       console.log('This test documents what the API actually returns vs what messages we show');
-      
+
       // This test is mainly for documentation - it will pass regardless
       // but logs the exact patterns we're seeing
-      
+
       console.log('✅ Test completed - check logs above for response patterns');
       expect(true).toBe(true);
     });
   });
 
   describe('🧹 Comprehensive Cleanup Verification', () => {
-    it('should verify all test playlists can be properly deleted', async () => {
+    it('should verify all test playlists can be properly deleted', async() => {
       console.log('\n🗑️ TESTING PLAYLIST DELETION:');
-      
+
       if (cleanupPlaylistIds.length === 0) {
         console.log('✅ No playlists to clean up - all tests cleaned up after themselves');
         expect(true).toBe(true);
         return;
       }
-      
+
       let deletionResults = [];
-      
+
       for (const playlistId of cleanupPlaylistIds) {
         try {
           const deleteResult = await server.handleDeletePlaylist({
@@ -335,12 +335,12 @@ describeE2E('E2E Playlist Behavior Analysis Tests', () => {
           console.log(`❌ Failed to delete ${playlistId}: ${error.message}`);
         }
       }
-      
+
       console.log('📊 Deletion summary:', deletionResults);
-      
+
       // Clear the cleanup array since we've processed them
       cleanupPlaylistIds = [];
-      
+
       expect(deletionResults.length).toBeGreaterThan(0);
     }, 30000);
   });
