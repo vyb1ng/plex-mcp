@@ -291,13 +291,13 @@ describe('Advanced Filters', () => {
 
       it('should filter by BPM range', () => {
         const slowTracks = server.applyAdvancedFilters(mockMusicTracks, {
-          bpm_max: 100
+          bpmMax: 100
         });
         expect(slowTracks).toHaveLength(1);
         expect(slowTracks[0].title).toBe('Calm Acoustic Song');
 
         const fastTracks = server.applyAdvancedFilters(mockMusicTracks, {
-          bpm_min: 120
+          bpmMin: 120
         });
         expect(fastTracks).toHaveLength(2);
         expect(fastTracks.map(t => t.title)).toContain('Energetic Dance Track');
