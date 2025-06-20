@@ -1284,6 +1284,42 @@ ${verification.error}
               },
               required: ['response', 'prompt_type']
             }
+          },
+          {
+            name: 'get_server_identity',
+            description: 'Get Plex server identity information (version, name, platform)',
+            inputSchema: {
+              type: 'object',
+              properties: {},
+              required: []
+            }
+          },
+          {
+            name: 'get_available_clients',
+            description: 'Get list of currently available/connected Plex clients',
+            inputSchema: {
+              type: 'object',
+              properties: {},
+              required: []
+            }
+          },
+          {
+            name: 'get_devices',
+            description: 'Get list of registered Plex devices',
+            inputSchema: {
+              type: 'object',
+              properties: {},
+              required: []
+            }
+          },
+          {
+            name: 'get_server_preferences',
+            description: 'Get Plex server preferences and configuration settings',
+            inputSchema: {
+              type: 'object',
+              properties: {},
+              required: []
+            }
           }
         ]
       };
@@ -1341,6 +1377,14 @@ ${verification.error}
           return await this.handleClearAuth(request.params.arguments);
         case 'validate_llm_response':
           return await this.handleValidateLLMResponse(request.params.arguments);
+        case 'get_server_identity':
+          return await this.handleGetServerIdentity(request.params.arguments);
+        case 'get_available_clients':
+          return await this.handleGetAvailableClients(request.params.arguments);
+        case 'get_devices':
+          return await this.handleGetDevices(request.params.arguments);
+        case 'get_server_preferences':
+          return await this.handleGetServerPreferences(request.params.arguments);
         default:
           throw new Error(`Unknown tool: ${request.params.name}`);
       }
@@ -1714,6 +1758,279 @@ All stored authentication credentials have been removed from this session.
 ${errorMessage}${troubleshooting}
 
 **ℹ️ Note:** In-memory authentication may still be cleared even if file operations failed.`
+          }
+        ],
+        isError: true
+      };
+    }
+  }
+
+  async handleGetServerIdentity(_args) {
+    try {
+      const token = await this.authManager.getAuthToken();
+      if (!token) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: '❌ **Authentication Required**\n\nPlease authenticate first using `authenticate_plex` or set PLEX_TOKEN environment variable.'
+            }
+          ],
+          isError: true
+        };
+      }
+
+      const plexUrl = process.env.PLEX_URL || 'https://app.plex.tv';
+      const response = await this.axios.get(`${plexUrl}/`, {
+        params: { 'X-Plex-Token': token },
+        httpsAgent: this.getHttpsAgent()
+      });
+      const serverData = response.data?.MediaContainer;
+
+      if (!serverData) {
+        throw new Error('Invalid server response');
+      }
+
+      const identity = {
+        friendlyName: serverData.friendlyName,
+        machineIdentifier: serverData.machineIdentifier,
+        version: serverData.version,
+        platform: serverData.platform,
+        platformVersion: serverData.platformVersion,
+        updatedAt: serverData.updatedAt,
+        size: serverData.size,
+        myPlex: serverData.myPlex === '1',
+        myPlexSigninState: serverData.myPlexSigninState,
+        transcoderActiveVideoSessions: serverData.transcoderActiveVideoSessions,
+        multiuser: serverData.multiuser === '1'
+      };
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `🏠 **Plex Server Identity**
+
+**Server Name:** ${identity.friendlyName}
+**Version:** ${identity.version}
+**Platform:** ${identity.platform} ${identity.platformVersion}
+**Machine ID:** ${identity.machineIdentifier}
+**MyPlex Connected:** ${identity.myPlex ? '✅ Yes' : '❌ No'}
+**Multiuser:** ${identity.multiuser ? '✅ Enabled' : '❌ Disabled'}
+**Active Transcoding Sessions:** ${identity.transcoderActiveVideoSessions || 0}
+**Library Items:** ${identity.size || 0}
+**Last Updated:** ${identity.updatedAt ? new Date(identity.updatedAt * 1000).toLocaleString() : 'Unknown'}`
+          }
+        ]
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `❌ **Server Identity Error**\n\n${error.message}`
+          }
+        ],
+        isError: true
+      };
+    }
+  }
+
+  async handleGetAvailableClients(_args) {
+    try {
+      const token = await this.authManager.getAuthToken();
+      if (!token) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: '❌ **Authentication Required**\n\nPlease authenticate first using `authenticate_plex` or set PLEX_TOKEN environment variable.'
+            }
+          ],
+          isError: true
+        };
+      }
+
+      const plexUrl = process.env.PLEX_URL || 'https://app.plex.tv';
+      const response = await this.axios.get(`${plexUrl}/clients`, {
+        params: { 'X-Plex-Token': token },
+        httpsAgent: this.getHttpsAgent()
+      });
+      const clients = response.data?.MediaContainer?.Server || [];
+
+      if (clients.length === 0) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: '📱 **Available Clients**\n\nNo clients are currently connected to your Plex server.'
+            }
+          ]
+        };
+      }
+
+      const clientList = clients.map(client =>
+        `**${client.name}** (${client.product})\n` +
+        `- Version: ${client.version || 'Unknown'}\n` +
+        `- Platform: ${client.platform || 'Unknown'}\n` +
+        `- Address: ${client.address}:${client.port}\n` +
+        `- Machine ID: ${client.machineIdentifier}\n` +
+        `- Protocol: ${client.protocol}\n` +
+        `- Capabilities: ${client.protocolCapabilities || 'Unknown'}`
+      ).join('\n\n');
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `📱 **Available Clients** (${clients.length})\n\n${clientList}`
+          }
+        ]
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `❌ **Available Clients Error**\n\n${error.message}`
+          }
+        ],
+        isError: true
+      };
+    }
+  }
+
+  async handleGetDevices(_args) {
+    try {
+      const token = await this.authManager.getAuthToken();
+      if (!token) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: '❌ **Authentication Required**\n\nPlease authenticate first using `authenticate_plex` or set PLEX_TOKEN environment variable.'
+            }
+          ],
+          isError: true
+        };
+      }
+
+      const plexUrl = process.env.PLEX_URL || 'https://app.plex.tv';
+      const response = await this.axios.get(`${plexUrl}/devices`, {
+        params: { 'X-Plex-Token': token },
+        httpsAgent: this.getHttpsAgent()
+      });
+      const devices = response.data?.MediaContainer?.Device || [];
+
+      if (devices.length === 0) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: '📱 **Registered Devices**\n\nNo devices are registered with your Plex server.'
+            }
+          ]
+        };
+      }
+
+      const deviceList = devices.map(device =>
+        `**${device.name}** (${device.product})\n` +
+        `- Platform: ${device.platform || 'Unknown'}\n` +
+        `- Version: ${device.version || 'Unknown'}\n` +
+        `- Client ID: ${device.clientIdentifier}\n` +
+        `- Created: ${device.createdAt ? new Date(device.createdAt * 1000).toLocaleDateString() : 'Unknown'}\n` +
+        `- Last Seen: ${device.lastSeenAt ? new Date(device.lastSeenAt * 1000).toLocaleString() : 'Unknown'}`
+      ).join('\n\n');
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `📱 **Registered Devices** (${devices.length})\n\n${deviceList}`
+          }
+        ]
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `❌ **Devices Error**\n\n${error.message}`
+          }
+        ],
+        isError: true
+      };
+    }
+  }
+
+  async handleGetServerPreferences(_args) {
+    try {
+      const token = await this.authManager.getAuthToken();
+      if (!token) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: '❌ **Authentication Required**\n\nPlease authenticate first using `authenticate_plex` or set PLEX_TOKEN environment variable.'
+            }
+          ],
+          isError: true
+        };
+      }
+
+      const plexUrl = process.env.PLEX_URL || 'https://app.plex.tv';
+      const response = await this.axios.get(`${plexUrl}/:/prefs`, {
+        params: { 'X-Plex-Token': token },
+        httpsAgent: this.getHttpsAgent()
+      });
+      const prefs = response.data?.MediaContainer?.Setting || [];
+
+      if (prefs.length === 0) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: '⚙️ **Server Preferences**\n\nNo preferences found or access denied.'
+            }
+          ]
+        };
+      }
+
+      // Group preferences by category
+      const categories = {};
+      prefs.forEach(pref => {
+        const category = pref.group || 'General';
+        if (!categories[category]) {
+          categories[category] = [];
+        }
+        categories[category].push(pref);
+      });
+
+      const prefText = Object.entries(categories).map(([category, settings]) => {
+        const settingsList = settings
+          .filter(setting => setting.hidden !== 'true')
+          .slice(0, 10) // Limit to prevent overwhelming output
+          .map(setting =>
+            `- **${setting.label || setting.id}**: ${setting.value || 'Not set'}`
+          ).join('\n');
+
+        return settingsList ? `**${category}:**\n${settingsList}` : '';
+      }).filter(Boolean).join('\n\n');
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `⚙️ **Server Preferences** (${prefs.length} total)\n\n${prefText}\n\n*Note: Only showing non-hidden preferences (limited to 10 per category)*`
+          }
+        ]
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `❌ **Server Preferences Error**\n\n${error.message}`
           }
         ],
         isError: true
