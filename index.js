@@ -16,6 +16,12 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { HttpLogger } = require('./http-logger');
+const {
+  buildEnhancedPrompt,
+  validateTokenLimits,
+  validateResponse,
+  handleLLMError
+} = require('./llm-utils');
 
 // Initialize HTTP logger with Plex MCP specific configuration
 const httpLogger = new HttpLogger({
@@ -110,7 +116,8 @@ class PlexAuthManager {
       device: process.env.PLEX_DEVICE || 'PlexMCP',
       version: process.env.PLEX_VERSION || '1.0.0',
       forwardUrl: process.env.PLEX_REDIRECT_URL || 'https://app.plex.tv/auth#!',
-      platform: process.env.PLEX_PLATFORM || 'Web'
+      platform: process.env.PLEX_PLATFORM || 'Web',
+      urlencode: true // Ensure proper URL encoding by the OAuth library
     };
 
     this.plexOauth = new PlexOauth(clientInfo);
@@ -248,15 +255,28 @@ class PlexMCPServer {
 
 ${verification.error}
 
-Please run \`check_auth_status\` and follow the authentication process.` :
+**📋 Complete Authentication Flow:**
+
+**Step 1:** Run \`authenticate_plex\` to start the authentication process
+**Step 2:** Open the provided URL in your browser and sign into Plex  
+**Step 3:** Grant permission to PlexMCP when prompted
+**Step 4:** Return here and run \`check_auth_status\` to complete authentication
+**Step 5:** Try your Plex operation again
+
+**⚡ Quick Alternative:** Set the \`PLEX_TOKEN\` environment variable for persistent authentication (skips OAuth flow).
+
+**💡 Need your token?** Find it at: https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/` :
         `❌ **Connection Failed**
 
 ${verification.error}
 
-**Troubleshooting:**
-- Verify PLEX_URL is correct and accessible
-- Check if server is running and reachable
-- Ensure network connectivity`;
+**🔧 Troubleshooting:**
+- Verify \`PLEX_URL\` environment variable is correct and accessible
+- Check if your Plex server is running and reachable from this network
+- Ensure network connectivity and firewall settings allow access
+- Try testing the URL directly in a browser
+
+**🌐 Current Server:** ${process.env.PLEX_URL || 'https://app.plex.tv (default)'}`;
 
       return {
         success: false,
@@ -1245,6 +1265,25 @@ ${verification.error}
               properties: {},
               required: []
             }
+          },
+          {
+            name: 'validate_llm_response',
+            description: 'Validate LLM response format and content against expected schemas for different prompt types',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                response: {
+                  type: 'object',
+                  description: 'The LLM response object to validate'
+                },
+                prompt_type: {
+                  type: 'string',
+                  enum: ['playlist_description', 'content_recommendation', 'smart_playlist_rules', 'media_analysis'],
+                  description: 'The type of prompt that generated this response'
+                }
+              },
+              required: ['response', 'prompt_type']
+            }
           }
         ]
       };
@@ -1300,45 +1339,191 @@ ${verification.error}
           return await this.handleCheckAuthStatus(request.params.arguments);
         case 'clear_auth':
           return await this.handleClearAuth(request.params.arguments);
+        case 'validate_llm_response':
+          return await this.handleValidateLLMResponse(request.params.arguments);
         default:
           throw new Error(`Unknown tool: ${request.params.name}`);
       }
     });
   }
 
+  async handleValidateLLMResponse(args) {
+    const { response, prompt_type: promptType } = args;
+
+    try {
+      const validation = validateResponse(response, promptType);
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `🔍 **LLM Response Validation Results**
+
+**Prompt Type:** ${promptType}
+**Valid:** ${validation.valid ? '✅ Yes' : '❌ No'}
+
+${validation.errors.length > 0 ? `**❌ Errors:**\n${validation.errors.map(e => `- ${e}`).join('\n')}\n` : ''}
+${validation.warnings.length > 0 ? `**⚠️ Warnings:**\n${validation.warnings.map(w => `- ${w}`).join('\n')}\n` : ''}
+
+${validation.valid ?
+    '✅ **Response is valid and ready to use!**' :
+    '❌ **Response needs to be corrected before use.**'
+}
+
+**💡 Tips for Better Responses:**
+- Ensure all required fields are present
+- Check data types match expected formats  
+- Verify content meets length requirements
+- Follow the specified JSON structure
+
+**🔧 Response Structure for ${promptType}:**
+${this.getResponseStructureHelp(promptType)}`
+          }
+        ]
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `❌ **Validation Error**
+
+${error.message}
+
+**Available prompt types for validation:**
+- \`playlist_description\` - Validates playlist description responses
+- \`content_recommendation\` - Validates content recommendation lists
+- \`smart_playlist_rules\` - Validates smart playlist criteria
+- \`media_analysis\` - Validates media library analysis results
+
+**Usage Example:**
+\`\`\`json
+{
+  "response": {"description": "Your playlist description here"},
+  "prompt_type": "playlist_description"
+}
+\`\`\``
+          }
+        ],
+        isError: true
+      };
+    }
+  }
+
+  getResponseStructureHelp(promptType) {
+    switch (promptType) {
+      case 'playlist_description':
+        return `\`\`\`json
+{
+  "description": "2-3 sentence engaging description (50-500 chars)"
+}
+\`\`\``;
+
+      case 'content_recommendation':
+        return `\`\`\`json
+{
+  "recommendations": [
+    {
+      "title": "Content Title",
+      "year": 2023,
+      "reason": "Why it's similar (20+ chars)",
+      "appeal": "What makes it appealing",
+      "features": ["Notable feature 1", "Feature 2"]
+    }
+  ]
+}
+\`\`\``;
+
+      case 'smart_playlist_rules':
+        return `\`\`\`json
+{
+  "criteria": {
+    "filters": [{"type": "genre", "value": "rock"}],
+    "sorting": {"field": "rating", "order": "desc"},
+    "advanced_criteria": ["Recent additions", "High rated"],
+    "tips": ["Keep playlist fresh", "Review periodically"]
+  }
+}
+\`\`\``;
+
+      case 'media_analysis':
+        return `\`\`\`json
+{
+  "insights": {
+    "patterns": ["Pattern 1", "Pattern 2"],
+    "recommendations": ["Suggestion 1", "Suggestion 2"],
+    "statistics": {"total_items": 100, "genres": 15},
+    "trends": ["Trend 1", "Trend 2"]
+  }
+}
+\`\`\``;
+
+      default:
+        return 'Unknown prompt type - no structure help available';
+    }
+  }
+
   async handleAuthenticatePlex(_args) {
     try {
       const { loginUrl, pinId } = await this.authManager.requestAuthUrl();
 
+      // Properly encode the entire URL to handle all special characters
+      const encodedUrl = encodeURI(loginUrl);
+
       return {
         content: [
           {
             type: 'text',
-            text: `Plex Authentication Started
+            text: `🔑 Plex Authentication Started
 
-**Next Steps:**
-1. Open this URL in your browser:
+**📋 Step-by-Step Instructions:**
+
+1. **Copy and open this authentication URL in your browser:**
 
 \`\`\`
-${loginUrl.replace(/\[/g, '%5B').replace(/\]/g, '%5D').replace(/!/g, '%21')}
+${encodedUrl}
 \`\`\`
 
-2. Sign into your Plex account when prompted
-3. **IMPORTANT:** After signing in, you MUST return here and run the \`check_auth_status\` tool to complete the authentication process
-4. Only after running \`check_auth_status\` will your token be saved and ready for use
+2. **Sign into your Plex account** when prompted
+3. **Grant permission** to PlexMCP when asked
+4. **Return here and run \`check_auth_status\`** to complete authentication
+5. **Verify success** - you'll see a confirmation message when complete
 
-**Pin ID:** ${pinId}
+**🔢 Pin ID:** \`${pinId}\`
+**⏰ Session Timeout:** ~15 minutes
 
-⚠️ **Don't forget:** The authentication is not complete until you return and run \`check_auth_status\`!`
+⚠️ **CRITICAL:** Authentication is not complete until you run \`check_auth_status\` and receive confirmation!
+
+**💡 Alternative:** For persistent authentication, set the \`PLEX_TOKEN\` environment variable instead.`
           }
         ]
       };
     } catch (_error) {
+      let errorMessage = `Failed to start authentication: ${_error.message}`;
+
+      // Provide specific troubleshooting based on error type
+      if (_error.message.includes('network') || _error.message.includes('connect')) {
+        errorMessage += `
+
+**🔧 Troubleshooting:**
+- Check your internet connection
+- Verify Plex services are accessible
+- Try again in a few moments`;
+      } else if (_error.message.includes('client')) {
+        errorMessage += `
+
+**🔧 Troubleshooting:**
+- Check PLEX_CLIENT_ID environment variable
+- Verify client configuration is correct`;
+      }
+
       return {
         content: [
           {
             type: 'text',
-            text: `❌ Authentication Error: ${_error.message}`
+            text: `❌ **Authentication Error**
+
+${errorMessage}`
           }
         ],
         isError: true
@@ -1354,42 +1539,119 @@ ${loginUrl.replace(/\[/g, '%5B').replace(/\]/g, '%5D').replace(/!/g, '%21')}
 
       if (authToken) {
         this.connectionVerified = false; // Reset so next tool use will verify the new token
-        return {
-          content: [
-            {
-              type: 'text',
-              text: `✅ Plex Authentication Successful!
 
-Your authentication token has been stored and will be used for all Plex API requests. You can now use all Plex tools without needing the PLEX_TOKEN environment variable.
+        // Verify the token works by testing connection
+        try {
+          const verification = await this.verifyConnection();
+          if (verification.verified) {
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: `✅ **Plex Authentication Successful!**
 
-**Note:** This token is stored only for this session. For persistent authentication, consider setting the PLEX_TOKEN environment variable.`
-            }
-          ]
-        };
+🎉 **You're all set!** Your authentication token has been saved and verified.
+
+**✓ Token Status:** Active and working
+**✓ Connection:** Verified to Plex server
+**✓ Ready to use:** All Plex tools are now available
+
+**🔄 Session Storage:** Token saved for this session
+**💾 Persistent Option:** Set \`PLEX_TOKEN\` environment variable for permanent authentication
+
+**Next Steps:** You can now use any Plex tool like \`search_plex\`, \`browse_libraries\`, etc.`
+                }
+              ]
+            };
+          } else {
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: `⚠️ **Authentication Completed with Issues**
+
+Your token was retrieved successfully, but there's a connection issue:
+
+**Issue:** ${verification.error}
+
+**Next Steps:**
+1. Check your Plex server settings
+2. Verify PLEX_URL is correctly configured
+3. Try using Plex tools - they may still work`
+                }
+              ]
+            };
+          }
+        } catch (verifyError) {
+          // Token was saved but connection verification failed - still a success
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `✅ **Authentication Token Saved**
+
+Your Plex authentication token has been successfully retrieved and stored.
+
+**⚠️ Connection Test:** Could not verify server connection (${verifyError.message})
+
+**This is likely fine** - try using Plex tools to confirm everything works.`
+              }
+            ]
+          };
+        }
       } else {
+        const pinInfo = pin_id ? ` (Pin: ${pin_id})` : '';
         return {
           content: [
             {
               type: 'text',
-              text: `⏳ Authentication Pending
+              text: `⏳ **Authentication Pending**${pinInfo}
 
-The user has not yet completed the authentication process. Please:
+The authentication process is not yet complete. Please:
 
-1. Make sure you've visited the login URL from the authenticate_plex tool
-2. Sign into your Plex account in the browser
-3. Try checking the auth status again in a few moments
+**📋 Steps to Complete:**
+1. ✅ Open the authentication URL from \`authenticate_plex\`
+2. ✅ Sign into your Plex account in the browser  
+3. ⏸️ **Grant permission** to PlexMCP when prompted
+4. 🔄 Return here and run \`check_auth_status\` again
 
-You can run check_auth_status again to check if authentication is complete.`
+**⏰ Timeout:** Authentication links expire after ~15 minutes
+**🔄 Still waiting?** Try running \`check_auth_status\` again in 30 seconds
+
+**💡 Tip:** If the browser window closed, you may need to restart with \`authenticate_plex\``
             }
           ]
         };
       }
     } catch (_error) {
+      let errorMessage = _error.message;
+      let troubleshooting = '';
+
+      // Provide specific guidance based on error type
+      if (_error.message.includes('No pin ID')) {
+        troubleshooting = `
+
+**🔧 Solution:** Run \`authenticate_plex\` first to get a new authentication URL`;
+      } else if (_error.message.includes('expired') || _error.message.includes('timeout')) {
+        troubleshooting = `
+
+**🔧 Solution:** The authentication session expired. Run \`authenticate_plex\` to start over`;
+      } else if (_error.message.includes('network') || _error.message.includes('connect')) {
+        troubleshooting = `
+
+**🔧 Troubleshooting:**
+- Check your internet connection
+- Verify Plex services are accessible
+- Try again in a few moments`;
+      }
+
       return {
         content: [
           {
             type: 'text',
-            text: `❌ Auth Status Check Error: ${_error.message}`
+            text: `❌ **Authentication Check Failed**
+
+${errorMessage}${troubleshooting}`
           }
         ],
         isError: true
@@ -1406,21 +1668,52 @@ You can run check_auth_status again to check if authentication is complete.`
         content: [
           {
             type: 'text',
-            text: `🔄 Authentication Cleared
+            text: `🔄 **Authentication Cleared Successfully**
 
-All stored authentication credentials have been cleared. To use Plex tools again, you'll need to either:
+All stored authentication credentials have been removed from this session.
 
-1. Set the PLEX_TOKEN environment variable, or
-2. Run the authenticate_plex tool to sign in again`
+**🧹 What was cleared:**
+- Session authentication token
+- Stored OAuth credentials 
+- Cached connection verification
+
+**🔐 To authenticate again, choose one option:**
+
+**Option 1 - Interactive OAuth (Recommended):**
+1. Run \`authenticate_plex\` to get a new login URL
+2. Follow the authentication flow in your browser
+3. Run \`check_auth_status\` to complete the process
+
+**Option 2 - Environment Variable:**
+1. Set \`PLEX_TOKEN\` environment variable with your token
+2. Restart the MCP server to use the new token
+
+**💡 Note:** Environment variable tokens persist across sessions and don't require re-authentication.`
           }
         ]
       };
     } catch (_error) {
+      let errorMessage = _error.message;
+      let troubleshooting = '';
+
+      if (_error.message.includes('file') || _error.message.includes('permission')) {
+        troubleshooting = `
+
+**🔧 Troubleshooting:**
+- Check file system permissions
+- Verify home directory is accessible
+- The session token was still cleared from memory`;
+      }
+
       return {
         content: [
           {
             type: 'text',
-            text: `❌ Clear Auth Error: ${_error.message}`
+            text: `❌ **Clear Authentication Error**
+
+${errorMessage}${troubleshooting}
+
+**ℹ️ Note:** In-memory authentication may still be cleared even if file operations failed.`
           }
         ],
         isError: true
@@ -5888,20 +6181,25 @@ The smart playlist has been created and is now available in your Plex library!`
     this.server.setRequestHandler(GetPromptRequestSchema, async(request) => {
       const { name, arguments: args } = request.params;
 
-      switch (name) {
-        case 'playlist_description':
-          const playlistName = args?.playlist_name || 'Your Playlist';
-          const genre = args?.genre || '';
-          const contentInfo = args?.content_info || '';
+      try {
+        // Build enhanced prompt with validation and context
+        const promptInfo = buildEnhancedPrompt(name, args, {
+          userLibrarySize: args?.library_size,
+          preferredGenres: args?.preferred_genres,
+          recentActivity: args?.recent_activity
+        });
 
-          return {
-            description: `Generate a creative and engaging description for the playlist "${playlistName}"`,
-            messages: [
-              {
-                role: 'user',
-                content: {
-                  type: 'text',
-                  text: `Create a creative, engaging description for a playlist called "${playlistName}"${genre ? ` in the ${genre} genre` : ''}${contentInfo ? `.\n\nPlaylist content information:\n${contentInfo}` : ''}.
+        switch (name) {
+          case 'playlist_description':
+            const playlistName = args?.playlist_name || 'Your Playlist';
+            const genre = args?.genre || '';
+            const contentInfo = args?.content_info || '';
+
+            // Check token limits for content
+            const tokenCheck = validateTokenLimits(contentInfo, 'claude-3-sonnet');
+            const finalContentInfo = tokenCheck.withinLimits ? contentInfo : tokenCheck.content;
+
+            const promptText = `Create a creative, engaging description for a playlist called "${playlistName}"${genre ? ` in the ${genre} genre` : ''}${finalContentInfo ? `.\n\nPlaylist content information:\n${finalContentInfo}` : ''}${promptInfo.context}.
 
 The description should:
 - Be 2-3 sentences long
@@ -5910,25 +6208,41 @@ The description should:
 - Use vivid, descriptive language
 ${genre ? `- Reflect the ${genre} genre characteristics` : ''}
 
-Make it sound compelling and professional, like something you'd see on a streaming service.`
+Make it sound compelling and professional, like something you'd see on a streaming service.
+
+**Response Format:** Return a JSON object with a "description" field containing the playlist description.`;
+
+            return {
+              description: `Generate a creative and engaging description for the playlist "${playlistName}"`,
+              messages: [
+                {
+                  role: 'user',
+                  content: {
+                    type: 'text',
+                    text: promptText
+                  }
                 }
+              ],
+              // Include LLM-specific metadata
+              _metadata: {
+                promptType: name,
+                modelParameters: promptInfo.modelParameters,
+                tokenEstimate: promptInfo.tokenValidation.estimatedTokens,
+                withinLimits: promptInfo.tokenValidation.withinLimits,
+                validationSchema: 'playlist_description'
               }
-            ]
-          };
+            };
 
-        case 'content_recommendation':
-          const likedContent = args?.liked_content || '';
-          const contentType = args?.content_type || 'content';
-          const moodOrGenre = args?.mood_or_genre || '';
+          case 'content_recommendation':
+            const likedContent = args?.liked_content || '';
+            const contentType = args?.content_type || 'content';
+            const moodOrGenre = args?.mood_or_genre || '';
 
-          return {
-            description: 'Generate personalized content recommendations',
-            messages: [
-              {
-                role: 'user',
-                content: {
-                  type: 'text',
-                  text: `Based on these titles I've enjoyed: ${likedContent}
+            // Validate and truncate liked content if needed
+            const likedContentCheck = validateTokenLimits(likedContent, 'claude-3-sonnet', 2048);
+            const finalLikedContent = likedContentCheck.withinLimits ? likedContent : likedContentCheck.content;
+
+            const recommendationPrompt = `Based on these titles I've enjoyed: ${finalLikedContent}${promptInfo.context}
 
 Please recommend similar ${contentType}${moodOrGenre ? ` in the ${moodOrGenre} style` : ''}.
 
@@ -5938,24 +6252,42 @@ For each recommendation, provide:
 - What makes it appealing
 - Any notable cast, creators, or standout features
 
-Focus on finding hidden gems and quality content that matches my taste preferences shown in the titles I mentioned.`
+Focus on finding hidden gems and quality content that matches my taste preferences shown in the titles I mentioned.
+
+**Response Format:** Return a JSON object with a "recommendations" array, where each recommendation has fields: title, year, reason, appeal, and features.`;
+
+            return {
+              description: 'Generate personalized content recommendations',
+              messages: [
+                {
+                  role: 'user',
+                  content: {
+                    type: 'text',
+                    text: recommendationPrompt
+                  }
                 }
+              ],
+              _metadata: {
+                promptType: name,
+                modelParameters: promptInfo.modelParameters,
+                tokenEstimate: promptInfo.tokenValidation.estimatedTokens,
+                withinLimits: likedContentCheck.withinLimits,
+                validationSchema: 'content_recommendation'
               }
-            ]
-          };
+            };
 
-        case 'smart_playlist_rules':
-          const intent = args?.intent || '';
-          const libraryType = args?.library_type || 'media';
+          case 'smart_playlist_rules':
+            const intent = args?.intent || '';
+            const libraryType = args?.library_type || 'media';
 
-          return {
-            description: 'Generate smart playlist criteria and filtering rules',
-            messages: [
-              {
-                role: 'user',
-                content: {
-                  type: 'text',
-                  text: `I want to create a smart playlist for: ${intent}
+            return {
+              description: 'Generate smart playlist criteria and filtering rules',
+              messages: [
+                {
+                  role: 'user',
+                  content: {
+                    type: 'text',
+                    text: `I want to create a smart playlist for: ${intent}
 
 Library type: ${libraryType}
 
@@ -5966,23 +6298,23 @@ Please suggest specific filtering criteria and rules that would work well for th
 - Tips for keeping the playlist fresh and relevant
 
 Provide practical, actionable suggestions that would create a great automated playlist.`
+                  }
                 }
-              }
-            ]
-          };
+              ]
+            };
 
-        case 'media_analysis':
-          const contentData = args?.content_data || '';
-          const analysisType = args?.analysis_type || 'general analysis';
+          case 'media_analysis':
+            const contentData = args?.content_data || '';
+            const analysisType = args?.analysis_type || 'general analysis';
 
-          return {
-            description: 'Analyze media library content and patterns',
-            messages: [
-              {
-                role: 'user',
-                content: {
-                  type: 'text',
-                  text: `Please analyze this media library data for ${analysisType}:
+            return {
+              description: 'Analyze media library content and patterns',
+              messages: [
+                {
+                  role: 'user',
+                  content: {
+                    type: 'text',
+                    text: `Please analyze this media library data for ${analysisType}:
 
 ${contentData}
 
@@ -5994,23 +6326,23 @@ Provide insights about:
 - Any interesting observations about the content
 
 Format the analysis in a clear, organized way that's easy to understand and actionable.`
+                  }
                 }
-              }
-            ]
-          };
+              ]
+            };
 
-        case 'server_troubleshooting':
-          const errorDetails = args?.error_details || '';
-          const serverInfo = args?.server_info || '';
+          case 'server_troubleshooting':
+            const errorDetails = args?.error_details || '';
+            const serverInfo = args?.server_info || '';
 
-          return {
-            description: 'Help diagnose and resolve Plex server issues',
-            messages: [
-              {
-                role: 'user',
-                content: {
-                  type: 'text',
-                  text: `I'm having an issue with my Plex server. Here are the details:
+            return {
+              description: 'Help diagnose and resolve Plex server issues',
+              messages: [
+                {
+                  role: 'user',
+                  content: {
+                    type: 'text',
+                    text: `I'm having an issue with my Plex server. Here are the details:
 
 Error/Issue: ${errorDetails}
 
@@ -6023,13 +6355,50 @@ Please help me:
 4. Identify if this is a common issue with known solutions
 
 Focus on practical, actionable solutions that don't require advanced technical expertise.`
+                  }
                 }
-              }
-            ]
-          };
+              ]
+            };
 
-        default:
-          throw new Error(`Unknown prompt: ${name}`);
+          default:
+            throw new Error(`Unknown prompt: ${name}`);
+        }
+      } catch (error) {
+        // Handle prompt-specific errors with enhanced error information
+        const errorInfo = handleLLMError(error, name);
+
+        return {
+          description: `Error generating prompt for ${name}`,
+          messages: [
+            {
+              role: 'system',
+              content: {
+                type: 'text',
+                text: `❌ **Prompt Generation Error**
+
+${errorInfo.message}
+
+**Error Type:** ${errorInfo.error}
+**Retryable:** ${errorInfo.retryable ? 'Yes' : 'No'}
+${errorInfo.retryAfter ? `**Retry After:** ${errorInfo.retryAfter} seconds` : ''}
+
+**Troubleshooting:**
+- Check that all required arguments are provided
+- Verify argument formats match expected types
+- Ensure content length is within reasonable limits
+- Try simplifying the request if it's too complex
+
+**Available Prompts:** playlist_description, content_recommendation, smart_playlist_rules, media_analysis, server_troubleshooting`
+              }
+            }
+          ],
+          _metadata: {
+            error: true,
+            errorType: errorInfo.error,
+            retryable: errorInfo.retryable,
+            originalError: error.message
+          }
+        };
       }
     });
   }
