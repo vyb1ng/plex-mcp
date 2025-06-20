@@ -1,6 +1,6 @@
 {
   "name": "plex-mcp",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "A Model Context Protocol (MCP) server that enables Claude to query and manage Plex media libraries.",
   "main": "index.js",
   "bin": {
