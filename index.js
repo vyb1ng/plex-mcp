@@ -2961,8 +2961,10 @@ You can try creating the playlist manually in Plex and then use other MCP tools 
       const uri = `server://${machineId}/com.plexapp.plugins.library/library/sections/${library_id}/all?${queryParts.join('&')}`;
 
       // Debug logging
-      console.log('DEBUG: Generated URI:', uri);
-      console.log('DEBUG: Query parts:', queryParts);
+      if (process.env.DEBUG_PLAYLISTS) {
+        console.log('DEBUG: Generated URI:', uri);
+        console.log('DEBUG: Query parts:', queryParts);
+      }
 
       // Create smart playlist using POST to /playlists
       const createParams = new URLSearchParams();
@@ -3156,7 +3158,9 @@ The smart playlist has been created and is now available in your Plex library!`
         batchMethod = 'single';
       } else {
         // Multiple items - use sequential individual adds (only reliable method)
-        console.log(`Adding ${item_keys.length} items sequentially (batch operations are unreliable)...`);
+        if (process.env.DEBUG_PLAYLISTS) {
+          console.log(`Adding ${item_keys.length} items sequentially (batch operations are unreliable)...`);
+        }
         batchMethod = 'sequential-reliable';
         let sequentialCount = 0;
         const sequentialResults = [];

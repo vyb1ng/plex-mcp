@@ -9,8 +9,8 @@
   "scripts": {
     "start": "node index.js",
     "test": "jest --testPathIgnorePatterns=/tests/e2e/",
-    "test:e2e": "jest --testPathPattern=e2e",
-    "test:e2e:analysis": "jest --testPathPattern=e2e --testNamePattern=\"(Playlist Behavior Analysis|Critical Remove Bug Investigation|Multiple Item Addition Analysis)\"",
+    "test:e2e": "jest --testPathPatterns=e2e",
+    "test:e2e:analysis": "jest --testPathPatterns=e2e --testNamePattern=\"(Playlist Behavior Analysis|Critical Remove Bug Investigation|Multiple Item Addition Analysis)\"",
     "test:all": "jest",
     "test:watch": "jest --watch --testPathIgnorePatterns=/tests/e2e/",
     "test:coverage": "jest --coverage --testPathIgnorePatterns=/tests/e2e/",
