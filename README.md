@@ -3,6 +3,10 @@
 
 Search and manage your Plex media libraries with Claude. Actively developed by Claude and a nerdy human who mostly uses Plex for auditory delights and wanted to see how much could be accomplished without knowing much about what they're doing. Results may vary, but probably in a good way.
 
+<a href="https://glama.ai/mcp/servers/@vyb1ng/plex-mcp">
+  <img width="380" height="200" src="https://glama.ai/mcp/servers/@vyb1ng/plex-mcp/badge" alt="Plex Server MCP server" />
+</a>
+
 ## Quick Start
 
 ### Install via Smithery (Recommended)
